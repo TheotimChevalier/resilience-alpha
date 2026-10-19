@@ -10,30 +10,42 @@
       register: docker_res
       changed_when: false
 
-    - name: 2. Vérifier l'état d'exécution des conteneurs critiques
+    - name: 2. Déployer la plateforme depuis la configuration locale
+      ansible.builtin.command:
+        cmd: docker compose --env-file .env up --build -d
+        chdir: "{{ playbook_dir }}/.."
+      register: compose_deploy
+      changed_when: "'Started' in compose_deploy.stdout or 'Created' in compose_deploy.stdout"
+
+    - name: 3. Vérifier l'état d'exécution des conteneurs critiques
       ansible.builtin.command: docker ps
       register: running_containers
       changed_when: false
 
-    - name: 3. Valider la présence des microservices obligatoires
+    - name: 4. Valider la présence des microservices obligatoires
       ansible.builtin.assert:
         that:
           - "'resilience-payment-api' in running_containers.stdout"
+          - "'resilience-auth' in running_containers.stdout"
           - "'resilience-prometheus' in running_containers.stdout"
           - "'resilience-postgres' in running_containers.stdout"
           - "'resilience-aiops' in running_containers.stdout"
+          - "'resilience-waf' in running_containers.stdout"
+          - "'resilience-dashboard' in running_containers.stdout"
         fail_msg: "Échec : un conteneur critique est arrêté."
-        success_msg: "Tous les services (API, DB, Prometheus, AIOps) sont opérationnels."
+        success_msg: "Les services API, auth, DB, WAF, dashboard, Prometheus et AIOps sont démarrés."
 
-    - name: 4. Vérifier la connectivité HTTP de l'API de paiement
-      ansible.builtin.uri:
-        url: "http://localhost:8000/health"
-        method: GET
-        status_code: 200
+    - name: 5. Vérifier la santé de l'API depuis son réseau conteneurisé
+      ansible.builtin.command:
+        cmd: >-
+          docker exec resilience-payment-api python -c
+          "import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health', timeout=3); assert r.status == 200"
       register: api_check
-      retries: 3
-      delay: 2
+      changed_when: false
+      retries: 6
+      delay: 5
+      until: api_check.rc == 0
 
     - name: Synthèse d'audit d'infrastructure
       ansible.builtin.debug:
-        msg: "Infrastructure conforme et prête pour la démonstration de résilience."
+        msg: "Déploiement lancé et santé technique de l'API vérifiée. La reprise métier reste à tester via le scénario Red Team."

@@ -1,0 +1,62 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "targets": [{ "expr": "sum(rate(resilience_payment_requests_total[1m]))", "legendFormat": "Paiements/s", "refId": "A" }],
+      "title": "Débit des paiements",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "targets": [{ "expr": "sum(rate(resilience_payment_requests_total{status=~\"5..\"}[1m])) / clamp_min(sum(rate(resilience_payment_requests_total[1m])), 0.001)", "legendFormat": "Ratio HTTP 5xx", "refId": "A" }],
+      "title": "Taux d'échec des paiements",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [{ "expr": "sum(rate(resilience_payment_duration_seconds_sum[1m])) / clamp_min(sum(rate(resilience_payment_duration_seconds_count[1m])), 0.001)", "legendFormat": "Latence moyenne", "refId": "A" }],
+      "title": "Latence des paiements",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "id": 4,
+      "targets": [{ "expr": "{app=\"payment-api\"} |= \"incident\"", "refId": "A" }],
+      "title": "Journaux applicatifs et incidents",
+      "type": "logs"
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["resilience-alpha", "payments"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "title": "Resilience Alpha — Service Paiement",
+  "uid": "resilience-alpha",
+  "version": 1
+}

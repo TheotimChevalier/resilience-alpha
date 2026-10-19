@@ -1,8 +1,13 @@
 # Fichier : prometheus.yml
 global:
-  scrape_interval: 5s # Récolte les données toutes les 5 secondes (très rapide pour la démo)
+  scrape_interval: 5s
+  evaluation_interval: 5s
 
 scrape_configs:
   - job_name: 'payment-api'
+    metrics_path: /metrics
     static_configs:
       - targets: ['payment-api:8000']
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['prometheus:9090']

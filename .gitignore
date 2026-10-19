@@ -1,8 +1,18 @@
 ﻿# Secrets en clair (Interdit par le jury)
 .env
+.env.*
+!.env.example
 secrets/app.env
+secrets/key.txt
 *.pem
 *.key
+*.zip
+*.mp4
+dist/
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+rag/chroma/
 
 # Fichiers Python et caches
 __pycache__/

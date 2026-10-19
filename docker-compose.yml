@@ -3,91 +3,190 @@ services:
     image: postgres:15-alpine
     container_name: resilience-postgres
     environment:
-      - POSTGRES_USER=resilience
-      - POSTGRES_PASSWORD=alpha_secret
-      - POSTGRES_DB=payment_db
+      POSTGRES_USER: ${POSTGRES_USER:-resilience}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the local .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-payment_db}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 15
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
+
+  auth:
+    build: ./auth
+    container_name: resilience-auth
+    environment:
+      AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:?Set AUTH_SIGNING_SECRET in the local .env file}
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:?Set OPERATOR_USERNAME in the local .env file}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?Set OPERATOR_PASSWORD in the local .env file}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks: [resilience-net]
 
   payment-api:
     build: ./api
     container_name: resilience-payment-api
-    ports:
-      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-resilience}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the local .env file}@postgres:5432/${POSTGRES_DB:-payment_db}
+      AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:?Set AUTH_SIGNING_SECRET in the local .env file}
+      REMEDIATION_TOKEN: ${REMEDIATION_TOKEN:?Set REMEDIATION_TOKEN in the local .env file}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 4s
+      retries: 5
+      start_period: 15s
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
 
   waf:
     image: owasp/modsecurity-crs:nginx-alpine
     container_name: resilience-waf
     ports:
-      - "80:8080"
+      - "${WAF_BIND_ADDRESS:-127.0.0.1}:80:8080"
     environment:
-      - PORT=8080
-      - BACKEND=http://payment-api:8000
+      PORT: 8080
+      BACKEND: http://payment-api:8000
     depends_on:
-      - payment-api
+      payment-api:
+        condition: service_healthy
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.1
     container_name: resilience-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=3d
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      payment-api:
+        condition: service_healthy
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.3.0
     container_name: resilience-grafana
-    ports:
-      - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-operator}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in the local .env file}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+      - loki
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
 
   loki:
     image: grafana/loki:2.9.2
     container_name: resilience-loki
-    ports:
-      - "3100:3100"
     volumes:
-      - ./loki-config.yml:/etc/loki/local-config.yaml
+      - ./loki-config.yml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
     command: -config.file=/etc/loki/local-config.yaml
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
 
   aiops-detector:
     build: ./aiops
     container_name: resilience-aiops
-    volumes:
-      - //var/run/docker.sock:/var/run/docker.sock
+    environment:
+      PROMETHEUS_URL: http://prometheus:9090
+      PAYMENT_API_URL: http://payment-api:8000
+      AUTH_URL: http://auth:8001
+      OPERATOR_USERNAME: ${OPERATOR_USERNAME:?Set OPERATOR_USERNAME in the local .env file}
+      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?Set OPERATOR_PASSWORD in the local .env file}
+      REMEDIATION_TOKEN: ${REMEDIATION_TOKEN:?Set REMEDIATION_TOKEN in the local .env file}
+      POLL_SECONDS: ${AIOPS_POLL_SECONDS:-3}
+      REMEDIATION_RETRY_SECONDS: ${REMEDIATION_RETRY_SECONDS:-15}
     depends_on:
-      - prometheus
+      payment-api:
+        condition: service_healthy
+      auth:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
 
   dashboard:
     build: ./dashboard
     container_name: resilience-dashboard
     ports:
-      - "8080:80"
+      - "${DASHBOARD_BIND_ADDRESS:-127.0.0.1}:${DASHBOARD_PORT:-8080}:80"
+    depends_on:
+      - waf
+      - auth
     restart: unless-stopped
-    networks:
-      - resilience-net
+    networks: [resilience-net]
+
+  ollama:
+    image: ollama/ollama:0.5.7
+    container_name: resilience-ollama
+    profiles: ["ai"]
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+    networks: [resilience-net]
+
+  rag-assistant:
+    build: ./rag
+    container_name: resilience-rag
+    profiles: ["ai"]
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      EMBED_MODEL: ${EMBED_MODEL:-nomic-embed-text}
+      AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:?Set AUTH_SIGNING_SECRET in the local .env file}
+    volumes:
+      - ./rag/procedure_crise.md:/app/documents/procedure_crise.md:ro
+      - ./docs:/app/documents/project:ro
+      - rag-data:/app/chroma
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+    depends_on: [ollama]
+    restart: unless-stopped
+    networks: [resilience-net]
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  ollama-data:
+  rag-data:
 
 networks:
   resilience-net:
