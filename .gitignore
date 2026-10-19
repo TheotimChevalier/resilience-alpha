@@ -1,0 +1,17 @@
+﻿# Secrets en clair (Interdit par le jury)
+.env
+secrets/app.env
+*.pem
+*.key
+
+# Fichiers Python et caches
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+.pytest_cache/
+
+# Fichiers OS
+.DS_Store
+Thumbs.db

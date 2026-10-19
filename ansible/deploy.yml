@@ -1,15 +1,39 @@
-﻿---
-- name: Verification de l'infrastructure PROJECT RESILIENCE-ALPHA
+---
+- name: Audit et validation de l'infrastructure PROJECT RESILIENCE-ALPHA
   hosts: localhost
   connection: local
   gather_facts: false
 
   tasks:
-    - name: Verifier Docker
+    - name: 1. Contrôler la présence du moteur Docker
       ansible.builtin.command: docker --version
-      register: res
+      register: docker_res
       changed_when: false
 
-    - name: Statut
+    - name: 2. Vérifier l'état d'exécution des conteneurs critiques
+      ansible.builtin.command: docker ps
+      register: running_containers
+      changed_when: false
+
+    - name: 3. Valider la présence des microservices obligatoires
+      ansible.builtin.assert:
+        that:
+          - "'resilience-payment-api' in running_containers.stdout"
+          - "'resilience-prometheus' in running_containers.stdout"
+          - "'resilience-postgres' in running_containers.stdout"
+          - "'resilience-aiops' in running_containers.stdout"
+        fail_msg: "Échec : un conteneur critique est arrêté."
+        success_msg: "Tous les services (API, DB, Prometheus, AIOps) sont opérationnels."
+
+    - name: 4. Vérifier la connectivité HTTP de l'API de paiement
+      ansible.builtin.uri:
+        url: "http://localhost:8000/health"
+        method: GET
+        status_code: 200
+      register: api_check
+      retries: 3
+      delay: 2
+
+    - name: Synthèse d'audit d'infrastructure
       ansible.builtin.debug:
-        msg: "{{ res.stdout }}"
+        msg: "Infrastructure conforme et prête pour la démonstration de résilience."
