@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: resilience-postgres
+    environment:
+      - POSTGRES_USER=resilience
+      - POSTGRES_PASSWORD=alpha_secret
+      - POSTGRES_DB=payment_db
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  payment-api:
+    build: ./api
+    container_name: resilience-payment-api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  waf:
+    image: owasp/modsecurity-crs:nginx-alpine
+    container_name: resilience-waf
+    ports:
+      - "80:8080"
+    environment:
+      - PORT=8080
+      - BACKEND=http://payment-api:8000
+    depends_on:
+      - payment-api
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: resilience-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: resilience-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: resilience-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki-config.yml:/etc/loki/local-config.yaml
+    command: -config.file=/etc/loki/local-config.yaml
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  aiops-detector:
+    build: ./aiops
+    container_name: resilience-aiops
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+  dashboard:
+    build: ./dashboard
+    container_name: resilience-dashboard
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    networks:
+      - resilience-net
+
+networks:
+  resilience-net:
+    driver: bridge

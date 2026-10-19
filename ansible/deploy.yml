@@ -1,0 +1,15 @@
+﻿---
+- name: Verification de l'infrastructure PROJECT RESILIENCE-ALPHA
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Verifier Docker
+      ansible.builtin.command: docker --version
+      register: res
+      changed_when: false
+
+    - name: Statut
+      ansible.builtin.debug:
+        msg: "{{ res.stdout }}"

@@ -1,0 +1,124 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <title>PROJECT RESILIENCE-ALPHA - Supervision</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    function App() {
+      const [status, setStatus] = useState("Vérification...");
+      const [isHealthy, setIsHealthy] = useState(true);
+      const [logs, setLogs] = useState([]);
+      const [amount, setAmount] = useState(25.0);
+
+      const addLog = (msg) => {
+        setLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 15)]);
+      };
+
+      const checkHealth = async () => {
+        try {
+          const testRes = await fetch("http://localhost:8000/api/v1/pay", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: "MONITOR", amount: 1.0, destination_account: "CHECK" })
+          });
+          if (testRes.ok) {
+            setStatus("OPÉRATIONNEL (Nominal)");
+            setIsHealthy(true);
+          } else {
+            setStatus("DÉGRADÉ (503 Service Unavailable)");
+            setIsHealthy(false);
+          }
+        } catch (e) {
+          setStatus("INDISPONIBLE");
+          setIsHealthy(false);
+        }
+      };
+
+      useEffect(() => {
+        const interval = setInterval(checkHealth, 3000);
+        return () => clearInterval(interval);
+      }, []);
+
+      const sendPayment = async () => {
+        addLog(`Initiation transaction : ${amount} €`);
+        try {
+          const res = await fetch("http://localhost:8000/api/v1/pay", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ user_id: "CLIENT-WEB", amount: parseFloat(amount), destination_account: "ACC-RECV" })
+          });
+          const data = await res.json();
+          if (res.ok) {
+            addLog(`✓ Succès : Transaction ${data.transaction_id} validée`);
+          } else {
+            addLog(`✗ Échec : Erreur ${res.status} (${data.detail || "Panne"})`);
+          }
+        } catch (err) {
+          addLog(`✗ Erreur réseau / API injoignable`);
+        }
+      };
+
+      return (
+        <div className="p-8 max-w-5xl mx-auto">
+          <header className="flex justify-between items-center pb-6 border-b border-slate-700">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-white">PROJECT RESILIENCE-ALPHA</h1>
+              <p className="text-slate-400 text-sm">Supervision & Démonstrateur de Paiement Autonome</p>
+            </div>
+            <div className={`px-4 py-2 rounded-full font-semibold text-sm ${isHealthy ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500' : 'bg-rose-500/20 text-rose-400 border border-rose-500 animate-pulse'}`}>
+              {status}
+            </div>
+          </header>
+
+          <main className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+            <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-sm">
+              <h2 className="text-lg font-semibold mb-4 text-slate-200">Exécuter une Transaction</h2>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs uppercase text-slate-400 font-bold mb-1">Montant (€)</label>
+                  <input 
+                    type="number" 
+                    value={amount} 
+                    onChange={(e) => setAmount(e.target.value)} 
+                    className="w-full bg-slate-900 border border-slate-700 rounded px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <button 
+                  onClick={sendPayment}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2 rounded transition">
+                  Payer maintenant
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-sm flex flex-col">
+              <h2 className="text-lg font-semibold mb-4 text-slate-200">Journal d'Événements</h2>
+              <div className="flex-1 bg-slate-950 p-4 rounded border border-slate-900 font-mono text-xs overflow-y-auto max-h-56 space-y-1">
+                {logs.length === 0 ? <span className="text-slate-500">Aucune activité enregistrée.</span> : null}
+                {logs.map((log, index) => (
+                  <div key={index} className={log.includes("✓") ? "text-emerald-400" : log.includes("✗") ? "text-rose-400" : "text-slate-300"}>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
