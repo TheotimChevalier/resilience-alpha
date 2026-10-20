@@ -15,19 +15,20 @@ Exécuter :
 
 ```powershell
 py -3.12 -m pip install -r api\requirements.txt -r api\requirements-dev.txt
-py -3.12 -m pytest api\tests -q
 py -3.12 -m pip install -r aiops\requirements.txt
-Set-Location aiops
-py -3.12 -m pytest test_detector.py -q
+py -3.12 -m pytest api\tests aiops\test_detector.py -q
 Set-Location ..\dashboard
 npm ci
 npm run build
-npm audit
 ```
 
 Les tests automatisés emploient une base SQLite temporaire. Ils ne valident pas les
 images Docker, le WAF, Prometheus, Loki, les flux réseau Windows, la durée réelle de
 reprise ni le comportement avec une base de données restaurée.
+Le workflow `.github/workflows/ci.yml` rejoue les tests API/AIOps, construit le
+dashboard et vérifie la génération d'une archive expurgée des secrets sur chaque
+push et pull request. Ce contrôle CI n'est pas une preuve de déploiement ni une
+recette de bout en bout.
 
 ## Recette à exécuter et consigner sur le PC Hôte
 

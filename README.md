@@ -102,15 +102,18 @@ Les instructions de tests et les limites des résultats sont dans
 
 ```powershell
 py -3.12 -m pip install -r api\requirements.txt -r api\requirements-dev.txt
-py -3.12 -m pytest api\tests -q
+py -3.12 -m pip install -r aiops\requirements.txt
+py -3.12 -m pytest api\tests aiops\test_detector.py -q
 Set-Location dashboard
 npm ci
 npm run build
-npm audit
 ```
 
 Le test complet de bout en bout nécessite Docker Desktop actif, un compte de test
 local et les deux machines du réseau de laboratoire.
+Les tests API/AIOps et le build du dashboard sont également exécutés par GitHub
+Actions à chaque push et pull request ; ils ne remplacent pas la recette réelle sur
+les deux machines.
 
 ## Documentation et livrables
 
