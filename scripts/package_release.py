@@ -10,6 +10,7 @@ INCLUDED = (
     ".env.example",
     ".gitignore",
     "README.md",
+    ".github",
     "docker-compose.yml",
     "prometheus.yml",
     "loki-config.yml",
