@@ -28,9 +28,41 @@ jobs:
         run: |
           python -m pip install -r api/requirements.txt -r api/requirements-dev.txt
           python -m pip install -r aiops/requirements.txt
+          python -m pip install ansible-core
 
       - name: Run API and AIOps tests
         run: python -m pytest api/tests aiops/test_detector.py -q
+
+      - name: Check Ansible playbook syntax
+        run: |
+          ansible-playbook --syntax-check -i ansible/inventory.ini ansible/deploy.yml
+          ansible-playbook --syntax-check -i ansible/inventory.ini ansible/restore.yml
+          ansible-playbook --syntax-check -i ansible/inventory.ini ansible/enable-ai.yml
+
+      - name: Validate Compose and provisioned dashboard
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          AUTH_SIGNING_SECRET: ci-auth-signing-secret-with-at-least-32-characters
+          REMEDIATION_TOKEN: ci-remediation-token-with-at-least-24-characters
+          EXERCISE_TOKEN: ci-exercise-token-with-at-least-24-characters
+          OPERATOR_USERNAME: ci-operator
+          OPERATOR_PASSWORD: ci-operator-password-with-12-chars
+          GRAFANA_ADMIN_PASSWORD: ci-grafana-password
+        run: |
+          docker compose config --quiet
+          python -c "import json; json.load(open('observability/grafana/dashboards/resilience-alpha.json', encoding='utf-8'))"
+          docker run --rm --entrypoint promtool \
+            -v "$GITHUB_WORKSPACE/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "$GITHUB_WORKSPACE/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            prom/prometheus:v2.55.1 check config /etc/prometheus/prometheus.yml
+
+      - name: Test local RAG source index synchronization
+        env:
+          AUTH_SIGNING_SECRET: ci-rag-auth-signing-secret-with-at-least-32-characters
+        run: |
+          python -m venv /tmp/rag-venv
+          /tmp/rag-venv/bin/python -m pip install -r rag/requirements.txt -r rag/requirements-dev.txt
+          /tmp/rag-venv/bin/python -m pytest rag/test_indexing.py -q
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

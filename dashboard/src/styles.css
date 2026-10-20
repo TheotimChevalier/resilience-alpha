@@ -92,6 +92,14 @@ h1 > span { color: #65d9b2; }
 .refresh-button:hover { color: #74dfbe; border-color: #74dfbe55; }
 
 .metrics-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 19px; }
+.recovery-summary { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; padding: 14px 18px; margin-bottom: 19px; border: 1px solid rgba(99, 219, 174, .16); border-radius: 9px; background: rgba(64, 183, 145, .045); }
+.recovery-summary.detected, .recovery-summary.incident_active { border-color: rgba(228, 173, 92, .28); background: rgba(228, 173, 92, .045); }
+.recovery-summary.verifying { border-color: rgba(114, 185, 245, .28); background: rgba(84, 157, 223, .045); }
+.recovery-summary.recovery_failed { border-color: rgba(240, 120, 129, .35); background: rgba(240, 120, 129, .06); }
+.recovery-summary > div { display: grid; gap: 7px; }
+.recovery-summary strong { color: #dce7f4; font-size: 11px; font-weight: 600; }
+.recovery-summary.recovered strong { color: #74dfba; }
+.recovery-summary.recovery_failed strong { color: #ff9299; }
 .metric-card, .panel { border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(145deg, rgba(19, 30, 48, .9), rgba(16, 25, 41, .92)); box-shadow: 0 8px 24px rgba(0,0,0,.09); }
 .metric-card { min-height: 130px; padding: 16px 18px 14px; }
 .metric-top { display: flex; justify-content: space-between; align-items: center; }
@@ -178,6 +186,7 @@ h1 > span { color: #65d9b2; }
 .assistant-answer { padding: 13px; border: 1px solid rgba(91, 215, 170, .15); border-radius: 7px; background: rgba(70, 190, 150, .04); }
 .assistant-answer strong { color: #7bdcbb; font-size: 9px; }
 .assistant-answer p { margin: 7px 0 0; color: #c2ccda; font-size: 10px; line-height: 1.65; white-space: pre-wrap; }
+.assistant-answer small { display: block; margin-top: 9px; color: #8593a8; font-size: 9px; }
 
 @media (min-width: 1500px) {
   .page-content { padding-top: 58px; }
@@ -209,6 +218,7 @@ h1 > span { color: #65d9b2; }
   .health-pill { min-width: 0; width: 100%; }
   h1 { font-size: 27px; }
   .metrics-grid { grid-template-columns: 1fr; gap: 9px; margin-bottom: 13px; }
+  .recovery-summary { grid-template-columns: 1fr; gap: 13px; margin-bottom: 13px; }
   .metric-card { min-height: 112px; }
   .content-grid { gap: 12px; }
   .panel { padding: 17px; }

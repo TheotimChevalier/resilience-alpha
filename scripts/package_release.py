@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INCLUDED = (
     ".env.example",
     ".gitignore",
+    ".sops.yaml",
     "README.md",
     ".github",
     "docker-compose.yml",

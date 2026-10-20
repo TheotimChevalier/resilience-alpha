@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import hashlib
 import hmac
 import json
 import logging
@@ -28,6 +29,59 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("rag-assistant")
 retriever = None
 llm = None
+
+
+def _source_documents(source: str):
+    relative_source = os.path.relpath(source, DOCUMENTS_DIR)
+    documents = TextLoader(source, encoding="utf-8").load()
+    for document in documents:
+        document.metadata["source"] = relative_source
+    return RecursiveCharacterTextSplitter(
+        chunk_size=700,
+        chunk_overlap=100,
+        add_start_index=True,
+    ).split_documents(documents)
+
+
+def _sync_source(vectorstore, source: str) -> int:
+    documents = _source_documents(source)
+    relative_source = os.path.relpath(source, DOCUMENTS_DIR)
+    ids = [
+        hashlib.sha256(
+            f"{relative_source}\0{index}\0{document.page_content}".encode("utf-8")
+        ).hexdigest()
+        for index, document in enumerate(documents)
+    ]
+    existing = vectorstore.get(where={"source": relative_source})
+    existing_ids = set(existing["ids"])
+    expected_ids = set(ids)
+    stale_ids = existing_ids - expected_ids
+    if stale_ids:
+        vectorstore.delete(ids=sorted(stale_ids))
+    missing_indexes = [
+        index for index, identifier in enumerate(ids) if identifier not in existing_ids
+    ]
+    if missing_indexes:
+        vectorstore.add_documents(
+            [documents[index] for index in missing_indexes],
+            ids=[ids[index] for index in missing_indexes],
+        )
+    return len(documents)
+
+
+def _remove_deleted_sources(vectorstore, sources: list[str]) -> None:
+    active_sources = {
+        os.path.relpath(source, DOCUMENTS_DIR)
+        for source in sources
+    }
+    existing = vectorstore.get()
+    stale_ids = [
+        identifier
+        for identifier, metadata in zip(existing["ids"], existing["metadatas"])
+        if metadata.get("source") not in active_sources
+    ]
+    if stale_ids:
+        vectorstore.delete(ids=stale_ids)
 
 
 def _decode_payload(encoded: str) -> dict:
@@ -62,27 +116,19 @@ async def lifespan(_app: FastAPI):
     if not sources:
         raise RuntimeError(f"No Markdown source documents found in {DOCUMENTS_DIR}")
 
-    documents = []
-    for source in sources:
-        documents.extend(TextLoader(source, encoding="utf-8").load())
-    chunks = RecursiveCharacterTextSplitter(
-        chunk_size=700,
-        chunk_overlap=100,
-        add_start_index=True,
-    ).split_documents(documents)
     embeddings = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_BASE_URL)
     vectorstore = Chroma(
-        collection_name="resilience-alpha-operations",
+        collection_name="resilience-alpha-operations-v2",
         embedding_function=embeddings,
         persist_directory=CHROMA_DIR,
     )
-    if vectorstore._collection.count() == 0:
-        vectorstore.add_documents(chunks)
+    _remove_deleted_sources(vectorstore, sources)
+    chunk_count = sum(_sync_source(vectorstore, source) for source in sources)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
     llm = OllamaLLM(model=LLM_MODEL, temperature=0.1, base_url=OLLAMA_BASE_URL)
     logger.info(
         "Indexed %s documentation chunks from %s using %s and %s.",
-        len(chunks),
+        chunk_count,
         len(sources),
         LLM_MODEL,
         EMBED_MODEL,
@@ -103,6 +149,8 @@ class Question(BaseModel):
 
 @app.get("/health")
 def health():
+    if retriever is None or llm is None:
+        raise HTTPException(status_code=503, detail="Assistant is not initialized")
     return {"status": "ok", "model": LLM_MODEL}
 
 
@@ -116,7 +164,7 @@ def ask(question: Question, _operator: str = Depends(require_operator)):
         return {"answer": "Aucune procédure pertinente trouvée dans la documentation indexée.", "sources": []}
 
     context = "\n\n".join(
-        f"[{os.path.basename(doc.metadata.get('source', 'document'))}]\n{doc.page_content}"
+        f"[{doc.metadata.get('source', 'document')}]\n{doc.page_content}"
         for doc in docs
     )
     prompt = (
@@ -129,5 +177,5 @@ def ask(question: Question, _operator: str = Depends(require_operator)):
     answer = llm.invoke(prompt)
     return {
         "answer": answer,
-        "sources": sorted({os.path.basename(doc.metadata.get("source", "document")) for doc in docs}),
+        "sources": sorted({doc.metadata.get("source", "document") for doc in docs}),
     }

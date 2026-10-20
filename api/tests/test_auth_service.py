@@ -4,6 +4,7 @@ os.environ["AUTH_SIGNING_SECRET"] = "test-only-signing-secret-with-more-than-32-
 os.environ["OPERATOR_USERNAME"] = "test-operator"
 os.environ["OPERATOR_PASSWORD"] = "test-password-that-is-long-enough"
 os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["EXERCISE_TOKEN"] = "test-exercise-token-that-is-long-enough"
 os.environ["REMEDIATION_TOKEN"] = "test-remediation-token-that-is-long-enough"
 
 from fastapi.testclient import TestClient

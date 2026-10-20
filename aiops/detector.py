@@ -35,14 +35,41 @@ FEATURE_QUERIES = {
 }
 
 
+def generate_nominal_observations(sample_count: int, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    request_count = rng.poisson(lam=3.0, size=sample_count)
+    error_ratio = rng.beta(a=0.6, b=35, size=sample_count)
+    mean_latency = rng.normal(loc=0.1, scale=0.025, size=sample_count).clip(0.025, 0.25)
+    idle = request_count == 0
+    error_ratio[idle] = 0.0
+    mean_latency[idle] = 0.0
+    return np.column_stack((request_count, error_ratio, mean_latency))
+
+
+def generate_evaluation_data(
+    nominal_count: int = 400,
+    incident_count: int = 200,
+    seed: int = 2026,
+) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    nominal = generate_nominal_observations(nominal_count, seed)
+    incident = np.column_stack(
+        (
+            rng.poisson(lam=10.0, size=incident_count),
+            rng.beta(a=10, b=2, size=incident_count),
+            rng.normal(loc=0.12, scale=0.025, size=incident_count).clip(0.025, 0.25),
+        )
+    )
+    observations = np.vstack((nominal, incident))
+    labels = np.concatenate(
+        (np.zeros(nominal_count, dtype=int), np.ones(incident_count, dtype=int))
+    )
+    return observations, labels
+
+
 def train_detector() -> IsolationForest:
-    rng = np.random.default_rng(42)
-    request_count = rng.poisson(lam=3.0, size=800)
-    error_ratio = rng.beta(a=0.6, b=35, size=800)
-    mean_latency = rng.normal(loc=0.1, scale=0.025, size=800).clip(0.025, 0.25)
-    baseline = np.column_stack((request_count, error_ratio, mean_latency))
-    detector = IsolationForest(contamination=0.025, random_state=42)
-    detector.fit(baseline)
+    detector = IsolationForest(contamination=0.01, random_state=42)
+    detector.fit(generate_nominal_observations(sample_count=800, seed=42))
     return detector
 
 
@@ -138,6 +165,21 @@ def remediate() -> bool:
     return recovered
 
 
+def report_detection(features: dict[str, float], anomaly_score: float) -> None:
+    response = requests.post(
+        f"{PAYMENT_API_URL}/ops/detection",
+        headers={"X-Remediation-Token": REMEDIATION_TOKEN or ""},
+        json={
+            "model_anomaly": True,
+            "actionable": True,
+            "anomaly_score": anomaly_score,
+            **features,
+        },
+        timeout=5,
+    )
+    response.raise_for_status()
+
+
 def should_attempt_remediation(
     anomaly: bool,
     enough_evidence: bool,
@@ -159,8 +201,9 @@ def should_attempt_remediation(
 def main():
     model = train_detector()
     logger.info(
-        "IsolationForest trained on 800 synthetic nominal observations; features: request count, "
-        "HTTP 5xx ratio, and mean payment latency."
+        "IsolationForest trained on 800 deterministic synthetic nominal observations "
+        "(seed=42; contamination=0.01); features: request count, HTTP 5xx ratio, "
+        "and mean payment latency."
     )
     logger.info("Monitoring Prometheus at %s every %.1fs.", PROMETHEUS_URL, POLL_SECONDS)
     incident_active = False
@@ -174,11 +217,19 @@ def main():
                 [[features["request_count"], features["error_ratio"], features["mean_latency"]]]
             )
             anomaly = model.predict(sample)[0] == -1
+            anomaly_score = float(model.decision_function(sample)[0])
             enough_evidence = (
                 features["error_ratio"] >= 0.25
                 and features["request_count"] >= MIN_FAILED_PAYMENTS
             )
-            logger.debug("ML observation: %s; anomaly=%s; actionable=%s", features, anomaly, enough_evidence)
+            actionable = anomaly and enough_evidence
+            logger.debug(
+                "ML observation: features=%s; anomaly=%s; score=%.6f; actionable=%s",
+                features,
+                anomaly,
+                anomaly_score,
+                actionable,
+            )
             if should_attempt_remediation(
                 anomaly,
                 enough_evidence,
@@ -188,12 +239,19 @@ def main():
                 time.monotonic(),
             ):
                 retrying = incident_active
+                if not retrying:
+                    report_detection(features, anomaly_score)
                 incident_active = True
                 last_remediation_attempt = time.monotonic()
                 if retrying:
                     logger.warning("Retrying remediation after the previous recovery check failed.")
                 else:
-                    logger.warning("Anomaly detected from measured features: %s", features)
+                    logger.warning(
+                        "ML anomaly detected; score=%.6f; features=%s; remediation "
+                        "evidence gate passed.",
+                        anomaly_score,
+                        features,
+                    )
                 recovery_verified = remediate()
             elif incident_active and recovery_verified and features["error_ratio"] < 0.05:
                 incident_active = False
