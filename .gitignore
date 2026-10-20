@@ -2,8 +2,7 @@
 .env
 .env.*
 !.env.example
-secrets/app.env
-secrets/key.txt
+secrets/
 *.pem
 *.key
 *.zip
@@ -20,6 +19,7 @@ __pycache__/
 *.pyo
 venv/
 env/
+.venv*/
 .pytest_cache/
 
 # Fichiers OS

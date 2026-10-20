@@ -1,0 +1,34 @@
+groups:
+  - name: resilience-alpha
+    rules:
+      - alert: PaymentApiUnavailable
+        expr: up{job="payment-api"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Payment API indisponible pour Prometheus"
+          description: "Vérifier le service payment-api, le réseau Compose et ses journaux."
+
+      - alert: PaymentFailureSpike
+        expr: |
+          sum(increase(resilience_payment_requests_total[1m])) >= 3
+          and
+          (
+            sum(increase(resilience_payment_requests_total{status=~"5.."}[1m]))
+            / clamp_min(sum(increase(resilience_payment_requests_total[1m])), 1)
+          ) >= 0.25
+        labels:
+          severity: warning
+        annotations:
+          summary: "Hausse des échecs de paiement"
+          description: "Au moins trois requêtes et un ratio HTTP 5xx supérieur ou égal à 25 % sur une minute."
+
+      - alert: RecoveryVerificationPending
+        expr: resilience_incident_active == 0 and resilience_model_anomaly == 1 and resilience_recovery_verified == 0
+        for: 45s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reprise automatique non vérifiée"
+          description: "Une anomalie a été détectée mais aucune transaction métier de reprise n'a encore été confirmée."

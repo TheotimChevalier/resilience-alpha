@@ -46,9 +46,72 @@
       "datasource": { "type": "loki", "uid": "loki" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
       "id": 4,
-      "targets": [{ "expr": "{app=\"payment-api\"} |= \"incident\"", "refId": "A" }],
-      "title": "Journaux applicatifs et incidents",
+      "targets": [{ "expr": "{app=\"payment-api\"} | json | type=~\"incident|detection|remediation|recovery|recovery_failed|payment_failed|authorization_denied\"", "refId": "A" }],
+      "title": "Chronologie des incidents, décisions et reprises",
       "type": "logs"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "text": "Nominal" }, "1": { "text": "Incident actif" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 16 },
+      "id": 5,
+      "targets": [{ "expr": "resilience_incident_active", "refId": "A" }],
+      "title": "État de l'incident",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "text": "Aucune anomalie" }, "1": { "text": "Anomalie ML" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 16 },
+      "id": 6,
+      "targets": [{ "expr": "resilience_model_anomaly", "refId": "A" }],
+      "title": "Décision du détecteur ML",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "options": { "0": { "text": "À vérifier" }, "1": { "text": "Reprise vérifiée" } }, "type": "value" }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "orange", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 16 },
+      "id": 7,
+      "targets": [{ "expr": "resilience_recovery_verified", "refId": "A" }],
+      "title": "Vérification métier après reprise",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 16 },
+      "id": 8,
+      "targets": [{ "expr": "sum(ALERTS{alertstate=\"firing\"}) or vector(0)", "legendFormat": "Alertes actives", "refId": "A" }],
+      "title": "Alertes Prometheus actives",
+      "type": "stat"
     }
   ],
   "refresh": "5s",

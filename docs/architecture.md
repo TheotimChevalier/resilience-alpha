@@ -13,7 +13,7 @@
 | Grafana | Dashboard provisionné Prometheus/Loki | Hôte `127.0.0.1:3000` |
 | Loki | Reçoit les événements applicatifs | Réseau Compose uniquement |
 | AIOps | Isolation Forest, déclenchement et vérification de la remédiation | Réseau Compose uniquement |
-| Ollama + RAG | Assistant documentaire local optionnel (`llama3.2:3b`) | Profil Compose `ai`, réseau interne |
+| Ollama + LangChain + Chroma RAG | Assistant documentaire local ; modèle `llama3.2:3b` (3B paramètres) | Profil Compose `ai`, réseau interne |
 
 Le diagramme de flux est :
 
@@ -49,14 +49,16 @@ adresses de liaison sur l’interface Wi-Fi du laboratoire et contrôle le résu
 
 ## Détection et reprise
 
-Le PC Attaquant autorisé obtient un jeton de test, injecte une panne contrôlée
-protégée par `REMEDIATION_TOKEN`, puis envoie des paiements fictifs. L’API répond
+Le PC Attaquant autorisé obtient un jeton d'exercice distinct et injecte une panne
+contrôlée. Ce jeton n'autorise que cette injection ; le jeton `REMEDIATION_TOKEN`
+est réservé à AIOps. Le PC Attaquant envoie ensuite des paiements fictifs. L’API répond
 503 pendant l’exercice et n’écrit aucune transaction échouée en base. Prometheus
 observe le débit, la durée et la proportion de 5xx. AIOps construit le vecteur de
 caractéristiques, le présente à un Isolation Forest entraîné sur des observations nominales synthétiques (comptage
 Poisson du volume normal), puis exige un minimum d’évidence métier avant d’agir.
 
-AIOps appelle l’endpoint interne authentifié de remédiation, obtient un jeton
+AIOps publie la décision et ses métriques dans le journal métier, appelle l’endpoint
+interne authentifié de remédiation, obtient un jeton
 opérateur et vérifie la santé ainsi qu’une nouvelle transaction de 0,01 EUR. Il
 enregistre le résultat. Le dashboard, les logs Loki et Grafana donnent les preuves
 avant, pendant et après la reprise. Le détecteur n’a pas accès au socket Docker ni
@@ -70,5 +72,10 @@ au mot de passe PostgreSQL.
   la latence initiale de détection dépend donc du scrapping et du trafic observé.
 - Le modèle est entraîné sur des données nominales synthétiques à l’initialisation ;
   la qualité des seuils dépend d’essais documentés sur la machine de démonstration.
-- L’assistant RAG est séparé de la remédiation et n’a aucune route d’administration.
+- Les distributions, le jeu d'évaluation et les limites des métriques ML sont décrits
+  dans [`ml-experiment.md`](./ml-experiment.md).
+- L’assistant RAG est séparé de la remédiation, authentifié par jeton opérateur et
+  ne possède aucune route d’administration. Son index est synchronisé au démarrage
+  avec les documents Markdown montés en lecture seule ; les réponses exposent les
+  chemins de leurs sources.
 - Cette architecture de workshop n’est pas une architecture bancaire certifiée.

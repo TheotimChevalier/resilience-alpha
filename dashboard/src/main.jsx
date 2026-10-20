@@ -48,6 +48,8 @@ function App() {
   const [events, setEvents] = useState([]);
   const [transactions, setTransactions] = useState(0);
   const [volume, setVolume] = useState(0);
+  const [incidentPhase, setIncidentPhase] = useState("nominal");
+  const [latestDetection, setLatestDetection] = useState(null);
 
   const addEvent = useCallback((message, type = "info") => {
     setEvents((current) => [
@@ -99,6 +101,8 @@ function App() {
         })));
         setTransactions(result.transactions);
         setVolume(result.volume);
+        setIncidentPhase(result.incident_phase);
+        setLatestDetection(result.latest_detection);
       } catch {
         if (active) addEvent("Journal opérationnel momentanément indisponible.", "error");
       }
@@ -261,6 +265,26 @@ function App() {
             </article>
           </section>
 
+          <section className={`recovery-summary ${incidentPhase}`} aria-live="polite" aria-label="État de détection et de reprise">
+            <div>
+              <span className="metric-label">ÉTAPE DE REPRISE</span>
+              <strong>{{
+                nominal: "Service nominal — en attente d’incident",
+                incident_active: "Incident actif — détection en cours",
+                detected: "Anomalie ML détectée",
+                verifying: "Remédiation exécutée — vérification métier",
+                recovered: "Service rétabli et transaction vérifiée",
+                recovery_failed: "Reprise non vérifiée — intervention requise",
+              }[incidentPhase] || "État de reprise inconnu"}</strong>
+            </div>
+            <div className="recovery-evidence">
+              <span className="metric-label">DERNIÈRE DÉCISION ML</span>
+              <strong>{latestDetection
+                ? `Anomalie ${latestDetection.actionable ? "actionnable" : "non actionnable"} · score ${Number(latestDetection.anomaly_score).toFixed(3)}`
+                : "Aucune anomalie enregistrée"}</strong>
+            </div>
+          </section>
+
           <div className="content-grid">
             <section className="panel payment-panel" id="payments">
               <div className="panel-heading">
@@ -361,6 +385,7 @@ function App() {
 function Assistant({ token, addEvent }) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [sources, setSources] = useState([]);
   const [isAsking, setIsAsking] = useState(false);
   const [error, setError] = useState("");
 
@@ -382,6 +407,7 @@ function Assistant({ token, addEvent }) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || `Assistant indisponible (${response.status}).`);
       setAnswer(result.answer);
+      setSources(result.sources || []);
       addEvent("Réponse de l’assistant RAG reçue.", "success");
     } catch (requestError) {
       setError(requestError.message || "Assistant local indisponible.");
@@ -403,7 +429,11 @@ function Assistant({ token, addEvent }) {
       {!token && <p className="assistant-hint">Connectez-vous pour accéder à l’assistant local.</p>}
       {isAsking && <p className="assistant-hint">Le modèle local peut nécessiter quelques instants pour répondre.</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
-      {answer && <div className="assistant-answer"><strong>Réponse documentée</strong><p>{answer}</p></div>}
+      {answer && <div className="assistant-answer">
+        <strong>Réponse documentée</strong>
+        <p>{answer}</p>
+        {sources.length > 0 && <small>Sources : {sources.join(", ")}</small>}
+      </div>}
     </form>
   );
 }

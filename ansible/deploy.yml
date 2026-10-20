@@ -1,51 +1,135 @@
 ---
-- name: Audit et validation de l'infrastructure PROJECT RESILIENCE-ALPHA
+- name: Deploy and validate Resilience Alpha
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    project_root: "{{ playbook_dir }}/.."
+    required_services:
+      - postgres
+      - auth
+      - payment-api
+      - waf
+      - prometheus
+      - grafana
+      - loki
+      - aiops-detector
+      - dashboard
 
   tasks:
-    - name: 1. Contrôler la présence du moteur Docker
+    - name: Check the Docker CLI
       ansible.builtin.command: docker --version
-      register: docker_res
       changed_when: false
 
-    - name: 2. Déployer la plateforme depuis la configuration locale
-      ansible.builtin.command:
-        cmd: docker compose --env-file .env up --build -d
-        chdir: "{{ playbook_dir }}/.."
-      register: compose_deploy
-      changed_when: "'Started' in compose_deploy.stdout or 'Created' in compose_deploy.stdout"
+    - name: Check that the local environment file exists
+      ansible.builtin.stat:
+        path: "{{ project_root }}/.env"
+      register: local_env
 
-    - name: 3. Vérifier l'état d'exécution des conteneurs critiques
-      ansible.builtin.command: docker ps
-      register: running_containers
-      changed_when: false
-
-    - name: 4. Valider la présence des microservices obligatoires
+    - name: Require a local environment file
       ansible.builtin.assert:
         that:
-          - "'resilience-payment-api' in running_containers.stdout"
-          - "'resilience-auth' in running_containers.stdout"
-          - "'resilience-prometheus' in running_containers.stdout"
-          - "'resilience-postgres' in running_containers.stdout"
-          - "'resilience-aiops' in running_containers.stdout"
-          - "'resilience-waf' in running_containers.stdout"
-          - "'resilience-dashboard' in running_containers.stdout"
-        fail_msg: "Échec : un conteneur critique est arrêté."
-        success_msg: "Les services API, auth, DB, WAF, dashboard, Prometheus et AIOps sont démarrés."
+          - local_env.stat.exists
+          - local_env.stat.isreg
+        fail_msg: "Create .env from .env.example before deployment."
 
-    - name: 5. Vérifier la santé de l'API depuis son réseau conteneurisé
+    - name: Validate the Compose configuration without printing secrets
       ansible.builtin.command:
-        cmd: >-
-          docker exec resilience-payment-api python -c
-          "import urllib.request; r=urllib.request.urlopen('http://localhost:8000/health', timeout=3); assert r.status == 200"
-      register: api_check
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - config
+          - --quiet
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Build the project service images
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - build
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Apply the Compose desired state and wait for health checks
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - up
+          - --detach
+          - --wait
+          - --wait-timeout
+          - "120"
+        chdir: "{{ project_root }}"
+      register: compose_deploy
+      changed_when: (compose_deploy.stdout + compose_deploy.stderr) is search("Created|Recreated|Started")
+
+    - name: Collect running Compose services
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - ps
+          - --services
+          - --filter
+          - status=running
+        chdir: "{{ project_root }}"
+      register: running_services
+      changed_when: false
+
+    - name: Require every core service to be running
+      ansible.builtin.assert:
+        that:
+          - item in running_services.stdout_lines
+        fail_msg: "Required service {{ item }} is not running."
+      loop: "{{ required_services }}"
+
+    - name: Verify application and observability endpoints
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - resilience-payment-api
+          - python
+          - -c
+          - >-
+            import json, urllib.request;
+            urls = [
+              'http://localhost:8000/health',
+              'http://auth:8001/health',
+              'http://waf:8080/health',
+              'http://dashboard/',
+              'http://prometheus:9090/-/healthy',
+              'http://grafana:3000/api/health',
+              'http://loki:3100/ready'
+            ];
+            [urllib.request.urlopen(url, timeout=5).read() for url in urls];
+            health = json.loads(urllib.request.urlopen(urls[0], timeout=5).read());
+            assert health.get('status') == 'ok', health;
+            targets = json.loads(urllib.request.urlopen('http://prometheus:9090/api/v1/targets?state=active', timeout=5).read());
+            api_up = any(target.get('labels', {}).get('job') == 'payment-api' and target.get('health') == 'up' for target in targets['data']['activeTargets']);
+            assert api_up, 'Prometheus is not scraping payment-api successfully';
+            grafana = json.loads(urllib.request.urlopen(urls[5], timeout=5).read());
+            assert grafana.get('database') == 'ok', grafana
+      register: endpoint_check
       changed_when: false
       retries: 6
       delay: 5
-      until: api_check.rc == 0
+      until: endpoint_check.rc == 0
 
-    - name: Synthèse d'audit d'infrastructure
+    - name: Report deployment verification
       ansible.builtin.debug:
-        msg: "Déploiement lancé et santé technique de l'API vérifiée. La reprise métier reste à tester via le scénario Red Team."
+        msg: >-
+          Compose desired state is running; core service endpoints and the API
+          database health check passed. Business recovery still requires the
+          authorized scenario documented in docs/testing-and-demo.md.
