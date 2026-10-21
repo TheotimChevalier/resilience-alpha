@@ -12,6 +12,8 @@ node_modules/
 dashboard/node_modules/
 dashboard/dist/
 rag/chroma/
+face_agent/data/
+firmware/.pio/
 
 # Fichiers Python et caches
 __pycache__/

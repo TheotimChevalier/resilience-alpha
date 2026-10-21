@@ -22,11 +22,13 @@ jobs:
           cache-dependency-path: |
             api/requirements.txt
             api/requirements-dev.txt
+            auth/requirements.txt
             aiops/requirements.txt
 
       - name: Install Python dependencies
         run: |
           python -m pip install -r api/requirements.txt -r api/requirements-dev.txt
+          python -m pip install -r auth/requirements.txt
           python -m pip install -r aiops/requirements.txt
           python -m pip install ansible-core
 
@@ -43,6 +45,10 @@ jobs:
         env:
           POSTGRES_PASSWORD: ci-postgres-password
           AUTH_SIGNING_SECRET: ci-auth-signing-secret-with-at-least-32-characters
+          FACE_AGENT_TOKEN: ci-face-agent-token-with-at-least-32-characters
+          AIOPS_CLIENT_SECRET: ci-aiops-secret-with-at-least-32-characters
+          MQTT_USERNAME: ci-mqtt-user
+          MQTT_PASSWORD: ci-mqtt-password-with-at-least-32-characters
           REMEDIATION_TOKEN: ci-remediation-token-with-at-least-24-characters
           EXERCISE_TOKEN: ci-exercise-token-with-at-least-24-characters
           OPERATOR_USERNAME: ci-operator

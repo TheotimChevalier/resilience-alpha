@@ -1,6 +1,7 @@
 import numpy as np
 
 from detector import (
+    authenticate,
     collect_features,
     generate_evaluation_data,
     report_detection,
@@ -73,6 +74,33 @@ def test_model_decision_is_sent_to_the_protected_api_route(monkeypatch):
 
     assert captured["url"] == "http://payment-api/ops/detection"
     assert captured["headers"] == {"X-Remediation-Token": "test-remediation-token"}
+
+
+def test_detector_authenticates_with_its_service_secret(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"access_token": "service-token"}
+
+    def post(url, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr("detector.requests.post", post)
+    monkeypatch.setattr("detector.AUTH_URL", "http://auth")
+    monkeypatch.setattr("detector.AIOPS_CLIENT_SECRET", "test-aiops-client-secret")
+
+    assert authenticate() == "service-token"
+    assert captured["url"] == "http://auth/service/token"
+    assert captured["json"] == {
+        "client_id": "aiops-detector",
+        "client_secret": "test-aiops-client-secret",
+    }
     assert captured["json"] == {
         "model_anomaly": True,
         "actionable": True,

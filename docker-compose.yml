@@ -23,11 +23,41 @@ services:
       AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:?Set AUTH_SIGNING_SECRET in the local .env file}
       OPERATOR_USERNAME: ${OPERATOR_USERNAME:?Set OPERATOR_USERNAME in the local .env file}
       OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?Set OPERATOR_PASSWORD in the local .env file}
+      FACE_AGENT_URL: http://host.docker.internal:${FACE_AGENT_PORT:-8765}
+      FACE_AGENT_TOKEN: ${FACE_AGENT_TOKEN:?Set FACE_AGENT_TOKEN in the local .env file}
+      AIOPS_CLIENT_SECRET: ${AIOPS_CLIENT_SECRET:?Set AIOPS_CLIENT_SECRET in the local .env file}
+      AUTH_DB_PATH: /data/auth.db
+      MQTT_HOST: mosquitto
+      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the local .env file}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the local .env file}
+    volumes:
+      - auth-data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=2)"]
       interval: 10s
       timeout: 3s
       retries: 5
+    depends_on:
+      mosquitto:
+        condition: service_started
+    restart: unless-stopped
+    networks: [resilience-net]
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0.20
+    container_name: resilience-mosquitto
+    user: "1883:1883"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf 'listener 1883 0.0.0.0\nallow_anonymous false\npassword_file /tmp/password_file\npersistence false\n' > /tmp/mosquitto.conf
+        mosquitto_passwd -b -c /tmp/password_file "$$MQTT_USERNAME" "$$MQTT_PASSWORD"
+        exec mosquitto -c /tmp/mosquitto.conf
+    ports:
+      - "${MQTT_BIND_ADDRESS:-127.0.0.1}:1883:1883"
+    environment:
+      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the local .env file}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the local .env file}
     restart: unless-stopped
     networks: [resilience-net]
 
@@ -131,9 +161,8 @@ services:
       PROMETHEUS_URL: http://prometheus:9090
       PAYMENT_API_URL: http://payment-api:8000
       AUTH_URL: http://auth:8001
-      OPERATOR_USERNAME: ${OPERATOR_USERNAME:?Set OPERATOR_USERNAME in the local .env file}
-      OPERATOR_PASSWORD: ${OPERATOR_PASSWORD:?Set OPERATOR_PASSWORD in the local .env file}
       REMEDIATION_TOKEN: ${REMEDIATION_TOKEN:?Set REMEDIATION_TOKEN in the local .env file}
+      AIOPS_CLIENT_SECRET: ${AIOPS_CLIENT_SECRET:?Set AIOPS_CLIENT_SECRET in the local .env file}
       POLL_SECONDS: ${AIOPS_POLL_SECONDS:-3}
       REMEDIATION_RETRY_SECONDS: ${REMEDIATION_RETRY_SECONDS:-15}
     depends_on:
@@ -208,6 +237,7 @@ services:
     networks: [resilience-net]
 
 volumes:
+  auth-data:
   postgres-data:
   prometheus-data:
   grafana-data:

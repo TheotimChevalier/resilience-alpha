@@ -39,9 +39,20 @@ def run_attack():
     require_configuration()
     log(f"[*] Authorized resilience exercise against {TARGET_HOST} (WAF {WAF_URL})")
     log(f"[*] Dashboard: {DASHBOARD_URL}")
+    face_response = requests.post(
+        f"{AUTH_URL}/face/verify",
+        json={"username": USERNAME},
+        timeout=65,
+    )
+    face_response.raise_for_status()
+    log("[*] Face check requested from the host camera; the operator must be in view.")
     token_response = requests.post(
         f"{AUTH_URL}/token",
-        json={"username": USERNAME, "password": PASSWORD},
+        json={
+            "username": USERNAME,
+            "password": PASSWORD,
+            "challenge_id": face_response.json()["challenge_id"],
+        },
         timeout=5,
     )
     token_response.raise_for_status()

@@ -3,12 +3,33 @@
 Démonstrateur local de paiement fictif et de cyber-résilience. Toutes les données et
 tous les scénarios sont synthétiques ; ne pas utiliser de données bancaires réelles.
 
+## ESP8266 et LED bicolore
+
+Le projet PlatformIO est dans `firmware\`. Copier
+`firmware\include\secrets.example.h` en `firmware\include\secrets.h`, puis
+renseigner le SSID/mot de passe du point d'accès et les identifiants MQTT locaux.
+Le modèle de carte est NodeMCU ESP8266 ; la LED rouge et verte utilisent D5/D6
+(GPIO14/GPIO12), chacune avec une résistance série de 220 Ω. Adapter les broches
+au câblage réel avant la mise sous tension.
+
+Ouvrir le dossier `firmware` dans CLion avec PlatformIO, puis construire et
+téléverser l'environnement `esp8266`. Le courtier MQTT est authentifié et n'est
+publié que sur `MQTT_BIND_ADDRESS`. Les états pilotés sont : vert clignotant
+pendant l'attente du mot de passe, vert fixe pendant 30 s après succès, rouge fixe
+pendant 30 s après visage non reconnu, et dix impulsions rouges après mot de passe
+incorrect. Sans connexion au courtier, la LED reste éteinte.
+
+Les détails d'installation, le fonctionnement des verrouillages et les limites du
+prototype de reconnaissance sont décrits dans
+[`docs/face-auth-and-iot.md`](./docs/face-auth-and-iot.md).
+
 ## Démarrage local
 
 Prérequis : Docker Desktop avec Compose v2, Python 3.12 pour les tests et scripts,
 et un réseau de laboratoire autorisé. Le front est servi sur le port 8080 et le WAF
 sur le port 80. PostgreSQL, l’API, l’authentification, Prometheus, Loki et AIOps ne
-sont pas publiés directement sur l’hôte.
+sont pas publiés directement sur l’hôte. Le broker MQTT reste lié à la boucle locale
+par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
 
 1. Créer la configuration locale non versionnée :
 
@@ -25,13 +46,39 @@ sont pas publiés directement sur l’hôte.
    py -3.12 -c "import secrets; print(secrets.token_hex(32))"
    ```
 
-   Si une valeur manque dans le fichier issu de SOPS, la créer localement sans
-   l'afficher dans le terminal :
+   Générer aussi `FACE_AGENT_TOKEN`, `AIOPS_CLIENT_SECRET` et `MQTT_PASSWORD`
+   avec des valeurs distinctes. Générer `FACE_DATA_KEY` avec :
+
+   ```powershell
+   py -3.12 -m pip install -r face_agent\requirements.txt
+   py -3.12 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+   `MQTT_BIND_ADDRESS` reste `127.0.0.1` tant que l'ESP8266 n'est pas utilisé.
+   Pour le connecter au point d'accès, régler cette valeur sur l'adresse Wi-Fi du
+   PC Hôte, puis mettre cette même adresse dans `firmware\include\secrets.h`.
+
+   Si le fichier déchiffré avec SOPS ne contient pas les nouvelles clés ci-dessous,
+   les générer et les ajouter localement (ne pas exécuter ce bloc si elles existent
+   déjà) :
 
    ```powershell
    $exerciseToken = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
-   Add-Content -Path .env -Value "EXERCISE_TOKEN=$exerciseToken"
-   Remove-Variable exerciseToken
+   $faceAgentToken = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
+   $aiopsSecret = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
+   $mqttPassword = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
+   $faceDataKey = py -3.12 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   if (-not (Select-String -Path .env -Pattern '^EXERCISE_TOKEN=' -Quiet)) {
+     Add-Content -Path .env -Value "EXERCISE_TOKEN=$exerciseToken"
+   }
+   Add-Content -Path .env -Value @(
+     "FACE_AGENT_TOKEN=$faceAgentToken",
+     "AIOPS_CLIENT_SECRET=$aiopsSecret",
+     "MQTT_USERNAME=resilience-led",
+     "MQTT_PASSWORD=$mqttPassword",
+     "FACE_DATA_KEY=$faceDataKey"
+   )
+   Remove-Variable exerciseToken, faceAgentToken, aiopsSecret, mqttPassword, faceDataKey
    ```
 
    Garder `.env` hors du dépôt et de toute archive. Pour utiliser SOPS, installer
@@ -42,8 +89,9 @@ sont pas publiés directement sur l’hôte.
    sops --decrypt --input-type dotenv --output .env secrets\app.enc.env
    ```
 
-   Vérifier que le `.env` généré contient `EXERCISE_TOKEN` distinct de
-   `REMEDIATION_TOKEN`. Ne jamais archiver une clé privée ni le `.env`.
+   Vérifier que le `.env` contient des valeurs uniques pour `EXERCISE_TOKEN`,
+   `REMEDIATION_TOKEN`, `FACE_AGENT_TOKEN`, `AIOPS_CLIENT_SECRET` et `MQTT_PASSWORD`.
+   Ne jamais archiver une clé privée ni le `.env`.
 
 3. Vérifier la configuration puis démarrer le cœur :
 
@@ -52,8 +100,30 @@ sont pas publiés directement sur l’hôte.
    docker compose --env-file .env up --build -d
    ```
 
-4. Ouvrir `http://localhost:8080`. Les valeurs d’accès opérateur viennent de
-   `OPERATOR_USERNAME` et `OPERATOR_PASSWORD` dans `.env`.
+4. Démarrer l'agent caméra sur le PC Hôte, dans un terminal PowerShell séparé :
+
+   ```powershell
+   py -3.12 -m pip install -r face_agent\requirements.txt
+   py -3.12 -m face_agent.run
+   ```
+
+   Le service utilise la webcam USB du PC Hôte (index `CAMERA_INDEX`, défaut `0`).
+   Autoriser le port TCP 8765 dans le pare-feu Windows uniquement pour le réseau
+   privé du laboratoire et Docker Desktop. Le service exige `FACE_AGENT_TOKEN` ;
+   aucun flux vidéo ni échantillon facial n'est envoyé au navigateur.
+
+5. Après le premier démarrage de Compose, enrôler l'administrateur initial devant
+   la caméra du PC Hôte :
+
+   ```powershell
+   py -3.12 -m face_agent.enroll operator
+   ```
+
+   Remplacer `operator` par `OPERATOR_USERNAME` si nécessaire. Ouvrir ensuite
+   `http://localhost:8080`. L'identifiant doit d'abord être reconnu par la caméra,
+   puis le mot de passe sera demandé. Les administrateurs gèrent les comptes et
+   leurs profils faciaux dans la section **Habilitations faciales** du dashboard.
+   Les profils biométriques sont chiffrés localement avec `FACE_DATA_KEY`.
 
 Par défaut, les ports publiés sont limités à `127.0.0.1`. Pour la démonstration
 avec un PC Attaquant distinct, régler `WAF_BIND_ADDRESS` et `DASHBOARD_BIND_ADDRESS`
@@ -80,8 +150,9 @@ py -3.12 -m pip install -r redteam\requirements.txt
 py -3.12 redteam\attack.py
 ```
 
-Le script utilise uniquement le point d’accès du laboratoire : il authentifie
-l’opérateur, injecte une panne applicative contrôlée, émet huit paiements fictifs
+Le script utilise uniquement le point d’accès du laboratoire : il demande une
+vérification par la caméra USB du PC Hôte (l’opérateur doit être devant cette
+caméra), authentifie l’opérateur, injecte une panne applicative contrôlée, émet huit paiements fictifs
 dont au moins un doit échouer en HTTP 503, puis attend la détection ML et la reprise
 automatique. Les paiements envoyés après la reprise peuvent réussir.
 L’AIOps supprime le drapeau de panne, vérifie `/health`, crée une transaction de contrôle

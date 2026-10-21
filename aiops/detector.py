@@ -9,9 +9,8 @@ from sklearn.ensemble import IsolationForest
 PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://prometheus:9090")
 PAYMENT_API_URL = os.getenv("PAYMENT_API_URL", "http://payment-api:8000")
 AUTH_URL = os.getenv("AUTH_URL", "http://auth:8001")
-OPERATOR_USERNAME = os.getenv("OPERATOR_USERNAME")
-OPERATOR_PASSWORD = os.getenv("OPERATOR_PASSWORD")
 REMEDIATION_TOKEN = os.getenv("REMEDIATION_TOKEN")
+AIOPS_CLIENT_SECRET = os.getenv("AIOPS_CLIENT_SECRET")
 POLL_SECONDS = float(os.getenv("POLL_SECONDS", "3"))
 MIN_FAILED_PAYMENTS = int(os.getenv("MIN_FAILED_PAYMENTS", "3"))
 REMEDIATION_RETRY_SECONDS = float(os.getenv("REMEDIATION_RETRY_SECONDS", "15"))
@@ -92,11 +91,11 @@ def collect_features() -> dict[str, float]:
 
 
 def authenticate() -> str:
-    if not OPERATOR_USERNAME or not OPERATOR_PASSWORD:
-        raise RuntimeError("OPERATOR_USERNAME and OPERATOR_PASSWORD must be set")
+    if not AIOPS_CLIENT_SECRET:
+        raise RuntimeError("AIOPS_CLIENT_SECRET must be set")
     response = requests.post(
-        f"{AUTH_URL}/token",
-        json={"username": OPERATOR_USERNAME, "password": OPERATOR_PASSWORD},
+        f"{AUTH_URL}/service/token",
+        json={"client_id": "aiops-detector", "client_secret": AIOPS_CLIENT_SECRET},
         timeout=5,
     )
     response.raise_for_status()

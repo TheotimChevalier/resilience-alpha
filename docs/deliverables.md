@@ -9,7 +9,7 @@ exécuté sur deux machines.
 | Dossier d’ingénierie et gouvernance PDF (8–12 pages indicatives) | Contenu technique préparé dans `docs/` et `rag/procedure_crise.md` | Mise en page PDF, résultats réels, matrice EBIOS validée, mesures de reprise, contributions nominatives |
 | Support de présentation PPTX | Plan de présentation non généré | Ajouter nom/numéro du groupe, intervenants, arbitrages et captures réelles |
 | Clip Chrono MP4 (≤60 s, sans coupe) | Scénario et critères disponibles dans `docs/incident-response.md` | Enregistrer la séquence live depuis les machines autorisées ; une vidéo ne peut pas être fabriquée à partir de tests non exécutés |
-| Archive Code.zip | Générateur filtrant fourni (`scripts/package_release.py`) | Exécuter avec le numéro de groupe et inspecter le contenu avant remise |
+| Archive Code.zip | Générateur filtrant fourni (`scripts/package_release.py`), incluant l'agent facial et le firmware ; `.env`, les clés, `secrets.h` et les bases biométriques sont exclus | Exécuter avec le numéro de groupe et inspecter le contenu avant remise |
 | Démonstrateur local | Stack exécutée ; scénario contrôlé répété sur localhost avec paiement avant incident, huit 503, décision ML/AIOps et transactions après reprise | Répéter depuis un PC Attaquant distinct via le point d’accès de laboratoire ; conserver la capture continue et les journaux |
 
 Le numéro d’équipe et l’identité/contribution de ses membres ne figurent pas dans le

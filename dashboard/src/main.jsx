@@ -4,6 +4,17 @@ import "./styles.css";
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
 
+function readSessionClaims() {
+  const token = sessionStorage.getItem("operatorToken");
+  if (!token) return {};
+  try {
+    const payload = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(payload.padEnd(Math.ceil(payload.length / 4) * 4, "=")));
+  } catch {
+    return {};
+  }
+}
+
 function Icon({ name, size = 18 }) {
   const paths = {
     activity: <><path d="M3 12h4l3-8 4 16 3-8h4" /></>,
@@ -42,9 +53,18 @@ function App() {
   const [isPaying, setIsPaying] = useState(false);
   const [token, setToken] = useState(() => sessionStorage.getItem("operatorToken") || "");
   const [username, setUsername] = useState("");
+  const [authenticatedUsername, setAuthenticatedUsername] = useState(() => readSessionClaims().sub || "");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [loginStep, setLoginStep] = useState("username");
+  const [faceChallenge, setFaceChallenge] = useState("");
+  const [retrySeconds, setRetrySeconds] = useState(0);
+  const [role, setRole] = useState(() => readSessionClaims().role || "");
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [newUser, setNewUser] = useState({ username: "", password: "", role: "operator" });
+  const [adminError, setAdminError] = useState("");
+  const [isManagingUsers, setIsManagingUsers] = useState(false);
   const [events, setEvents] = useState([]);
   const [transactions, setTransactions] = useState(0);
   const [volume, setVolume] = useState(0);
@@ -85,7 +105,11 @@ function App() {
         });
         if (response.status === 401) {
           sessionStorage.removeItem("operatorToken");
-          if (active) setToken("");
+          if (active) {
+            setToken("");
+            setRole("");
+            setAuthenticatedUsername("");
+          }
           return;
         }
         if (!response.ok) throw new Error(`État opérationnel indisponible (${response.status})`);
@@ -115,6 +139,61 @@ function App() {
     };
   }, [token, addEvent]);
 
+  useEffect(() => {
+    if (!retrySeconds) return undefined;
+    const interval = window.setInterval(() => {
+      setRetrySeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [retrySeconds]);
+
+  const loadAdminUsers = useCallback(async () => {
+    if (!token || role !== "admin") return;
+    const response = await fetch(`${apiBase}/auth/admin/users`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(65000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || "Gestion des habilitations indisponible.");
+    setAdminUsers(result.users);
+  }, [token, role]);
+
+  useEffect(() => {
+    if (role !== "admin") return;
+    loadAdminUsers().catch((error) => setAdminError(error.message));
+  }, [role, loadAdminUsers]);
+
+  async function verifyFace(event) {
+    event.preventDefault();
+    setIsLoggingIn(true);
+    setLoginError("");
+    try {
+      const response = await fetch(`${apiBase}/auth/face/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim() }),
+        signal: AbortSignal.timeout(65000),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        const retry = Number(response.headers.get("Retry-After") || 0);
+        if (response.status === 401 || response.status === 423) {
+          setUsername("");
+          setRetrySeconds(retry);
+        }
+        throw new Error(result.detail || "Identification faciale refusée.");
+      }
+      setUsername(username.trim());
+      setFaceChallenge(result.challenge_id);
+      setLoginStep("password");
+      setRetrySeconds(0);
+    } catch (error) {
+      setLoginError(error.message || "Service de reconnaissance indisponible.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  }
+
   async function signIn(event) {
     event.preventDefault();
     setIsLoggingIn(true);
@@ -123,13 +202,22 @@ function App() {
       const response = await fetch(`${apiBase}/auth/token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, challenge_id: faceChallenge }),
         signal: AbortSignal.timeout(5000),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.detail || "Connexion refusée.");
+      if (!response.ok) {
+        setPassword("");
+        if (response.status === 401) setUsername("");
+        setFaceChallenge("");
+        setLoginStep("username");
+        setRetrySeconds(response.status === 401 ? 10 : 0);
+        throw new Error(result.detail || "Connexion refusée.");
+      }
       sessionStorage.setItem("operatorToken", result.access_token);
       setToken(result.access_token);
+      setRole(result.role);
+      setAuthenticatedUsername(result.username);
       setPassword("");
     } catch (error) {
       setLoginError(error.message || "Service d’authentification indisponible.");
@@ -141,7 +229,93 @@ function App() {
   function signOut() {
     sessionStorage.removeItem("operatorToken");
     setToken("");
+    setRole("");
+    setAuthenticatedUsername("");
+    setUsername("");
+    setLoginStep("username");
+    setFaceChallenge("");
     setEvents([]);
+  }
+
+  async function createUser(event) {
+    event.preventDefault();
+    setIsManagingUsers(true);
+    setAdminError("");
+    try {
+      const response = await fetch(`${apiBase}/auth/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(newUser),
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Création du compte refusée.");
+      setNewUser({ username: "", password: "", role: "operator" });
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminError(error.message);
+    } finally {
+      setIsManagingUsers(false);
+    }
+  }
+
+  async function enrollFace(targetUsername) {
+    setIsManagingUsers(true);
+    setAdminError(`Enrôlement de ${targetUsername} en cours : regardez la caméra du PC hôte.`);
+    try {
+      const response = await fetch(`${apiBase}/auth/admin/users/${encodeURIComponent(targetUsername)}/face`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(65000),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Enrôlement facial refusé.");
+      setAdminError(`Visage enregistré pour ${targetUsername} (${result.samples} images).`);
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminError(error.message);
+    } finally {
+      setIsManagingUsers(false);
+    }
+  }
+
+  async function deleteUser(targetUsername) {
+    if (!window.confirm(`Supprimer le compte et le profil facial de ${targetUsername} ?`)) return;
+    setIsManagingUsers(true);
+    setAdminError("");
+    try {
+      const response = await fetch(`${apiBase}/auth/admin/users/${encodeURIComponent(targetUsername)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(10000),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || "Suppression refusée.");
+      await loadAdminUsers();
+    } catch (error) {
+      setAdminError(error.message);
+    } finally {
+      setIsManagingUsers(false);
+    }
+  }
+
+  async function cancelIdentification() {
+    if (faceChallenge) {
+      try {
+        const response = await fetch(`${apiBase}/auth/face/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ challenge_id: faceChallenge }),
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) throw new Error(`Annulation refusée (${response.status}).`);
+      } catch {
+        setLoginError("Annulation non confirmée par le service d’authentification.");
+      }
+    }
+    setLoginStep("username");
+    setFaceChallenge("");
+    setPassword("");
   }
 
   async function sendPayment(event) {
@@ -217,7 +391,7 @@ function App() {
             <span className={`status-indicator ${health}`} />
             <div><strong>{health === "online" ? "API opérationnelle" : health === "checking" ? "Vérification…" : health === "degraded" ? "Incident détecté" : "API déconnectée"}</strong><small>Dernière vérification automatique</small></div>
           </div>
-          <div className="sidebar-footer"><span className="footer-avatar">OA</span><span><strong>Opérateur Alpha</strong><small>Administrateur</small></span><span className="footer-more">•••</span></div>
+          <div className="sidebar-footer"><span className="footer-avatar">{token ? authenticatedUsername.slice(0, 2).toUpperCase() : "?"}</span><span><strong>{token ? authenticatedUsername : "Non connecté"}</strong><small>{token ? role === "admin" ? "Administrateur" : "Opérateur" : "Authentification requise"}</small></span><span className="footer-more">•••</span></div>
         </div>
       </aside>
 
@@ -229,7 +403,7 @@ function App() {
             <span className="topbar-divider" />
             <span className="current-date">{new Intl.DateTimeFormat("fr-FR", { dateStyle: "full" }).format(new Date())}</span>
             {token && <button className="signout-button" type="button" onClick={signOut}>Se déconnecter</button>}
-            <button className="avatar-button" type="button" aria-label="Profil utilisateur">{token ? "OA" : "?"}</button>
+            <button className="avatar-button" type="button" aria-label="Profil utilisateur">{token ? authenticatedUsername.slice(0, 2).toUpperCase() : "?"}</button>
           </div>
         </header>
 
@@ -296,15 +470,26 @@ function App() {
                 <span className="panel-heading-icon"><Icon name="wallet" size={20} /></span>
               </div>
               {!token ? (
-                <form className="payment-form login-form" onSubmit={signIn}>
-                  <label htmlFor="operator-username">Connexion opérateur</label>
-                  <input id="operator-username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required placeholder="Identifiant" />
-                  <input id="operator-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required placeholder="Mot de passe" />
+                <form className="payment-form login-form" onSubmit={loginStep === "username" ? verifyFace : signIn}>
+                  <label htmlFor={loginStep === "username" ? "operator-username" : "operator-password"}>Connexion opérateur</label>
+                  {loginStep === "username" ? (
+                    <>
+                      <input id="operator-username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required placeholder="Identifiant" disabled={isLoggingIn || retrySeconds > 0} />
+                      <p className="secure-note">La caméra USB du PC hôte vérifie votre visage avant la saisie du mot de passe.</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="secure-note">Visage reconnu pour <strong>{username}</strong>. Saisissez votre mot de passe.</p>
+                      <input id="operator-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required placeholder="Mot de passe" disabled={isLoggingIn} />
+                    </>
+                  )}
                   {loginError && <p className="form-error" role="alert">{loginError}</p>}
-                  <button className="pay-button" type="submit" disabled={isLoggingIn}>
-                    {isLoggingIn ? "Connexion…" : "Se connecter"}
+                  {retrySeconds > 0 && <p className="form-error" role="status">Nouvel essai possible dans {retrySeconds} s.</p>}
+                  <button className="pay-button" type="submit" disabled={isLoggingIn || retrySeconds > 0}>
+                    {isLoggingIn ? loginStep === "username" ? "Vérification faciale…" : "Connexion…" : loginStep === "username" ? "Activer la caméra et vérifier" : "Se connecter"}
                     {!isLoggingIn && <Icon name="arrow" size={16} />}
                   </button>
+                  {loginStep === "password" && <button className="signout-button" type="button" onClick={cancelIdentification}>Recommencer l’identification</button>}
                   <div className="secure-note"><Icon name="shield" size={14} />Authentification requise pour consulter les opérations et payer</div>
                 </form>
               ) : <form className="payment-form" onSubmit={sendPayment}>
@@ -335,6 +520,37 @@ function App() {
                 <div className="secure-note" id="payment-hint"><Icon name="check" size={14} />Chaque opération est tracée dans le journal d’événements</div>
               </form>}
             </section>
+            {token && role === "admin" && (
+              <section className="panel access-panel" aria-label="Gestion des habilitations">
+                <div className="panel-heading">
+                  <div>
+                    <div className="section-kicker">ADMINISTRATION</div>
+                    <h2>Habilitations faciales</h2>
+                    <p>Créez des comptes, enrôlez les visages depuis la caméra USB du PC hôte ou révoquez un accès.</p>
+                  </div>
+                  <span className="panel-heading-icon"><Icon name="shield" size={20} /></span>
+                </div>
+                <form className="access-form" onSubmit={createUser}>
+                  <input aria-label="Nouvel identifiant" autoComplete="off" value={newUser.username} onChange={(event) => setNewUser({ ...newUser, username: event.target.value })} placeholder="Nouvel identifiant" required />
+                  <input aria-label="Mot de passe temporaire" type="password" autoComplete="new-password" value={newUser.password} onChange={(event) => setNewUser({ ...newUser, password: event.target.value })} placeholder="Mot de passe (12 caractères min.)" minLength={12} required />
+                  <select aria-label="Rôle" value={newUser.role} onChange={(event) => setNewUser({ ...newUser, role: event.target.value })}>
+                    <option value="operator">Opérateur</option>
+                    <option value="admin">Administrateur</option>
+                  </select>
+                  <button className="pay-button" type="submit" disabled={isManagingUsers}>Créer le compte</button>
+                </form>
+                {adminError && <p className="form-error" role="status">{adminError}</p>}
+                <ul className="access-list">
+                  {adminUsers.map((user) => (
+                    <li key={user.username}>
+                      <span><strong>{user.username}</strong><small>{user.role === "admin" ? "Administrateur" : "Opérateur"} · {user.face_enrolled ? "Visage enrôlé" : "Visage à enrôler"}</small></span>
+                      <button type="button" className="signout-button" onClick={() => enrollFace(user.username)} disabled={isManagingUsers}>{user.face_enrolled ? "Réenrôler" : "Enrôler"}</button>
+                      {user.username.toLowerCase() !== authenticatedUsername.toLowerCase() && <button type="button" className="signout-button" onClick={() => deleteUser(user.username)} disabled={isManagingUsers}>Révoquer</button>}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
 
             <section className="panel event-panel" id="events">
               <div className="panel-heading event-heading">

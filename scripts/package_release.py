@@ -21,6 +21,8 @@ INCLUDED = (
     "ansible",
     "dashboard",
     "docs",
+    "face_agent",
+    "firmware",
     "observability",
     "rag",
     "redteam",
@@ -32,12 +34,23 @@ EXCLUDED_DIRS = {
     "__pycache__",
     "dist",
     "node_modules",
+    ".pio",
     "venv",
     "env",
     "secrets",
 }
-EXCLUDED_NAMES = {".env", ".env.local", ".env.production", "key.txt"}
-EXCLUDED_SUFFIXES = {".enc", ".key", ".pem", ".pyc", ".zip", ".mp4", ".db", ".sqlite"}
+EXCLUDED_NAMES = {".env", ".env.local", ".env.production", "key.txt", "secrets.h"}
+EXCLUDED_SUFFIXES = {
+    ".enc",
+    ".key",
+    ".pem",
+    ".pyc",
+    ".zip",
+    ".mp4",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+}
 
 
 def is_safe(path: Path) -> bool:
