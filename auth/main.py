@@ -12,8 +12,6 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from paho.mqtt import MQTTException
-import paho.mqtt.publish as mqtt_publish
 import requests
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -25,10 +23,6 @@ FACE_AGENT_URL = os.getenv("FACE_AGENT_URL", "http://host.docker.internal:8765")
 FACE_AGENT_TOKEN = os.getenv("FACE_AGENT_TOKEN")
 AIOPS_CLIENT_SECRET = os.getenv("AIOPS_CLIENT_SECRET")
 AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", "/data/auth.db"))
-MQTT_HOST = os.getenv("MQTT_HOST", "mosquitto")
-MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USERNAME = os.getenv("MQTT_USERNAME")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD")
 CHALLENGE_TTL_SECONDS = 120
 FACE_LOCK_SECONDS = 300
 FACE_FAILURE_LIMIT = 2
@@ -200,19 +194,9 @@ def _require_admin(authorization: str | None) -> dict:
 
 
 def _publish_led(state: str) -> None:
-    payload = json.dumps({"state": state, "sent_at": int(time.time())})
     try:
-        mqtt_publish.single(
-            "resilience/led/state",
-            payload,
-            hostname=MQTT_HOST,
-            port=MQTT_PORT,
-            qos=1,
-            retain=False,
-            auth={"username": MQTT_USERNAME, "password": MQTT_PASSWORD},
-            timeout=2,
-        )
-    except (MQTTException, OSError, ValueError) as exc:
+        _face_agent("/led/state", method="POST", payload={"state": state})
+    except HTTPException as exc:
         logger.warning("LED controller notification failed for %s: %s", state, exc)
 
 

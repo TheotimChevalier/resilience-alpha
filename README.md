@@ -5,19 +5,19 @@ tous les scénarios sont synthétiques ; ne pas utiliser de données bancaires r
 
 ## ESP8266 et LED bicolore
 
-Le projet PlatformIO est dans `firmware\`. Copier
-`firmware\include\secrets.example.h` en `firmware\include\secrets.h`, puis
-renseigner le SSID/mot de passe du point d'accès et les identifiants MQTT locaux.
-Le modèle de carte est NodeMCU ESP8266 ; la LED rouge et verte utilisent D5/D6
-(GPIO14/GPIO12), chacune avec une résistance série de 220 Ω. Adapter les broches
-au câblage réel avant la mise sous tension.
+Le projet PlatformIO est dans `firmware\`. L'ESP8266 se branche en USB au PC Hôte
+(port série COM3 par défaut) ; aucun Wi-Fi, mot de passe MQTT ni fichier de secrets
+n'est requis. Le modèle de carte est NodeMCU ESP8266 ; d'après le câblage actuel,
+la LED verte utilise D1 et la rouge D2, chacune avec une résistance série de 220 Ω,
+et leur retour commun est relié à G (GND). Adapter les broches au câblage réel avant
+la mise sous tension.
 
-Ouvrir le dossier `firmware` dans CLion avec PlatformIO, puis construire et
-téléverser l'environnement `esp8266`. Le courtier MQTT est authentifié et n'est
-publié que sur `MQTT_BIND_ADDRESS`. Les états pilotés sont : vert clignotant
-pendant l'attente du mot de passe, vert fixe pendant 30 s après succès, rouge fixe
-pendant 30 s après visage non reconnu, et dix impulsions rouges après mot de passe
-incorrect. Sans connexion au courtier, la LED reste éteinte.
+Construire et téléverser l'environnement `esp8266` avec PlatformIO, puis démarrer
+l'agent caméra sur le PC Hôte : il relaie les états d'authentification vers la carte
+par le même câble USB série. Ne pas lancer de moniteur série pendant que l'agent
+utilise la carte. Les états pilotés sont : vert clignotant pendant l'attente du mot
+de passe, vert fixe pendant 30 s après succès, rouge fixe pendant 30 s après visage
+non reconnu, et dix impulsions rouges après mot de passe incorrect.
 
 Les détails d'installation, le fonctionnement des verrouillages et les limites du
 prototype de reconnaissance sont décrits dans
@@ -28,8 +28,8 @@ prototype de reconnaissance sont décrits dans
 Prérequis : Docker Desktop avec Compose v2, Python 3.12 pour les tests et scripts,
 et un réseau de laboratoire autorisé. Le front est servi sur le port 8080 et le WAF
 sur le port 80. PostgreSQL, l’API, l’authentification, Prometheus, Loki et AIOps ne
-sont pas publiés directement sur l’hôte. Le broker MQTT reste lié à la boucle locale
-par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
+sont pas publiés directement sur l’hôte. Seul l'agent du PC Hôte écoute sur le port
+TCP 8765.
 
 1. Créer la configuration locale non versionnée :
 
@@ -46,17 +46,13 @@ par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
    py -3.12 -c "import secrets; print(secrets.token_hex(32))"
    ```
 
-   Générer aussi `FACE_AGENT_TOKEN`, `AIOPS_CLIENT_SECRET` et `MQTT_PASSWORD`
-   avec des valeurs distinctes. Générer `FACE_DATA_KEY` avec :
+   Générer aussi `FACE_AGENT_TOKEN` et `AIOPS_CLIENT_SECRET` avec des valeurs
+   distinctes. Générer `FACE_DATA_KEY` avec :
 
    ```powershell
    py -3.12 -m pip install -r face_agent\requirements.txt
    py -3.12 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
    ```
-
-   `MQTT_BIND_ADDRESS` reste `127.0.0.1` tant que l'ESP8266 n'est pas utilisé.
-   Pour le connecter au point d'accès, régler cette valeur sur l'adresse Wi-Fi du
-   PC Hôte, puis mettre cette même adresse dans `firmware\include\secrets.h`.
 
    Si le fichier déchiffré avec SOPS ne contient pas les nouvelles clés ci-dessous,
    les générer et les ajouter localement (ne pas exécuter ce bloc si elles existent
@@ -66,7 +62,6 @@ par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
    $exerciseToken = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
    $faceAgentToken = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
    $aiopsSecret = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
-   $mqttPassword = py -3.12 -c "import secrets; print(secrets.token_hex(32))"
    $faceDataKey = py -3.12 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
    if (-not (Select-String -Path .env -Pattern '^EXERCISE_TOKEN=' -Quiet)) {
      Add-Content -Path .env -Value "EXERCISE_TOKEN=$exerciseToken"
@@ -74,11 +69,9 @@ par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
    Add-Content -Path .env -Value @(
      "FACE_AGENT_TOKEN=$faceAgentToken",
      "AIOPS_CLIENT_SECRET=$aiopsSecret",
-     "MQTT_USERNAME=resilience-led",
-     "MQTT_PASSWORD=$mqttPassword",
      "FACE_DATA_KEY=$faceDataKey"
    )
-   Remove-Variable exerciseToken, faceAgentToken, aiopsSecret, mqttPassword, faceDataKey
+   Remove-Variable exerciseToken, faceAgentToken, aiopsSecret, faceDataKey
    ```
 
    Garder `.env` hors du dépôt et de toute archive. Pour utiliser SOPS, installer
@@ -90,7 +83,7 @@ par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
    ```
 
    Vérifier que le `.env` contient des valeurs uniques pour `EXERCISE_TOKEN`,
-   `REMEDIATION_TOKEN`, `FACE_AGENT_TOKEN`, `AIOPS_CLIENT_SECRET` et `MQTT_PASSWORD`.
+   `REMEDIATION_TOKEN`, `FACE_AGENT_TOKEN` et `AIOPS_CLIENT_SECRET`.
    Ne jamais archiver une clé privée ni le `.env`.
 
 3. Vérifier la configuration puis démarrer le cœur :
@@ -104,26 +97,54 @@ par défaut ; seul l'agent caméra du PC Hôte écoute sur le port TCP 8765.
 
    ```powershell
    py -3.12 -m pip install -r face_agent\requirements.txt
+   py -3.12 -m face_agent.download_models
+   py -m pip install platformio
+   py -m platformio run -d firmware -e esp8266 -t upload --upload-port COM3
    py -3.12 -m face_agent.run
    ```
 
    Le service utilise la webcam USB du PC Hôte (index `CAMERA_INDEX`, défaut `0`).
+   Il utilise aussi le port série de l'ESP8266 (`ESP_SERIAL_PORT`, défaut `COM3`) ;
+   arrêter l'agent avant tout nouveau téléversement.
    Autoriser le port TCP 8765 dans le pare-feu Windows uniquement pour le réseau
    privé du laboratoire et Docker Desktop. Le service exige `FACE_AGENT_TOKEN` ;
    aucun flux vidéo ni échantillon facial n'est envoyé au navigateur.
 
-5. Après le premier démarrage de Compose, enrôler l'administrateur initial devant
-   la caméra du PC Hôte :
+5. Après le premier démarrage de Compose, importer les photos de référence de
+   l'administrateur initial dans son profil facial chiffré :
 
    ```powershell
-   py -3.12 -m face_agent.enroll operator
+   py -3.12 -m face_agent.enroll operator --images photo
    ```
 
-   Remplacer `operator` par `OPERATOR_USERNAME` si nécessaire. Ouvrir ensuite
-   `http://localhost:8080`. L'identifiant doit d'abord être reconnu par la caméra,
-   puis le mot de passe sera demandé. Les administrateurs gèrent les comptes et
-   leurs profils faciaux dans la section **Habilitations faciales** du dashboard.
-   Les profils biométriques sont chiffrés localement avec `FACE_DATA_KEY`.
+   Remplacer `operator` par `OPERATOR_USERNAME` si nécessaire. L'import valide les
+   huit images, extrait localement leurs empreintes faciales et remplace le profil
+   existant de cet utilisateur par ces empreintes chiffrées ; les photos ne sont pas
+   conservées dans la base et la commande n'ouvre pas la webcam. Pour enrôler directement
+   depuis la caméra, omettre `--images photo`. Ouvrir ensuite `http://localhost:8080`.
+   L'identifiant doit d'abord être reconnu par la caméra, puis le mot de passe sera
+   demandé. Les administrateurs gèrent les comptes et leurs profils faciaux dans la
+   section **Habilitations faciales** du dashboard. Les profils sont chiffrés avec
+   `FACE_DATA_KEY`.
+
+   Pour tester la reconnaissance des huit références contre la webcam sans modifier
+   le profil, lancer :
+
+   ```powershell
+   py -3.12 -m face_agent.test_live_match photo --led-on-mismatch
+   ```
+
+   La personne doit être devant la webcam pendant la capture. Toutes les images du
+   dossier `photo` servent de références en mémoire et les captures live ne sont
+   pas sauvegardées. Ce dossier n'est pas inclus dans l'archive de livraison.
+   `--led-on-mismatch` envoie au port série ESP8266 (défaut `COM3`) le signal rouge
+   si la majorité des captures échoue au seuil ou si aucun visage n'est détecté.
+   La reconnaissance locale utilise SFace et YuNet, modèles OpenCV Zoo téléchargés
+   par la commande ci-dessus puis vérifiés par SHA-256. `FACE_SIMILARITY_THRESHOLD`
+   vaut 0.363 par défaut (similarité cosinus). Ce seuil est un réglage de prototype,
+   pas une mesure de performance : teste les faux rejets et les fausses acceptations
+   avec des personnes enrôlées et non enrôlées avant tout usage réel. Les modèles
+   restent dans `face_agent\models` et ne sont pas versionnés.
 
 Par défaut, les ports publiés sont limités à `127.0.0.1`. Pour la démonstration
 avec un PC Attaquant distinct, régler `WAF_BIND_ADDRESS` et `DASHBOARD_BIND_ADDRESS`

@@ -1,11 +1,13 @@
 import hmac
 import io
+import logging
 import os
 import sqlite3
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -13,22 +15,33 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from face_agent.led_serial import LedSerialBridge
+from face_agent.recognition import (
+    FACE_SIMILARITY_THRESHOLD as DEFAULT_FACE_SIMILARITY_THRESHOLD,
+    cosine_similarity,
+    face_embedding,
+    load_face_models,
+)
+
 TOKEN = os.getenv("FACE_AGENT_TOKEN", "")
 DATA_KEY = os.getenv("FACE_DATA_KEY", "")
 DB_PATH = Path(os.getenv("FACE_DB_PATH", "face_agent/data/faces.sqlite3"))
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+ESP_SERIAL_PORT = os.getenv("ESP_SERIAL_PORT", "COM3")
+ESP_SERIAL_BAUD = int(os.getenv("ESP_SERIAL_BAUD", "115200"))
 CAMERA_BACKEND = cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
-FACE_SIZE = (128, 128)
-FACE_DISTANCE_THRESHOLD = float(os.getenv("FACE_DISTANCE_THRESHOLD", "55"))
+FACE_SIMILARITY_THRESHOLD = float(
+    os.getenv(
+        "FACE_SIMILARITY_THRESHOLD",
+        str(DEFAULT_FACE_SIMILARITY_THRESHOLD),
+    )
+)
+if not 0 < FACE_SIMILARITY_THRESHOLD <= 1:
+    raise RuntimeError("FACE_SIMILARITY_THRESHOLD must be between 0 and 1")
 CAMERA_TIMEOUT_SECONDS = float(os.getenv("CAMERA_TIMEOUT_SECONDS", "12"))
 SAMPLE_COUNT = 8
+RECOGNITION_SAMPLE_COUNT = 5
 camera_lock = threading.Lock()
-FACE_CASCADE = cv2.CascadeClassifier(
-    str(Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml")
-)
-if FACE_CASCADE.empty():
-    raise RuntimeError("OpenCV Haar face-detection model is unavailable")
-
 if len(TOKEN) < 32:
     raise RuntimeError("FACE_AGENT_TOKEN must contain at least 32 characters")
 try:
@@ -37,10 +50,23 @@ except (ValueError, TypeError) as exc:
     raise RuntimeError("FACE_DATA_KEY must be a valid Fernet key") from exc
 
 app = FastAPI(title="Resilience Alpha Host Face Agent", version="1.0.0")
+logger = logging.getLogger("face_agent")
+led_serial = LedSerialBridge(ESP_SERIAL_PORT, baudrate=ESP_SERIAL_BAUD)
 
 
 class UserRequest(BaseModel):
     username: str = Field(min_length=1, max_length=80)
+
+
+class LedStateRequest(BaseModel):
+    state: Literal[
+        "off",
+        "password_pending",
+        "face_denied",
+        "password_denied",
+        "granted",
+        "hardware_test",
+    ]
 
 
 @contextmanager
@@ -61,17 +87,13 @@ def _require_agent_token(token: str | None) -> None:
 
 
 def _extract_face(frame: np.ndarray) -> np.ndarray | None:
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = FACE_CASCADE.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(80, 80),
-    )
-    if len(faces) != 1:
+    try:
+        detector, recognizer = load_face_models()
+        return face_embedding(frame, detector, recognizer)
+    except ValueError:
         return None
-    x, y, width, height = faces[0]
-    return cv2.resize(gray[y : y + height, x : x + width], FACE_SIZE)
+
+
 def _capture_samples(count: int, timeout: float = CAMERA_TIMEOUT_SECONDS) -> list[np.ndarray]:
     if not camera_lock.acquire(blocking=False):
         raise HTTPException(status_code=409, detail="La caméra est déjà utilisée.")
@@ -118,12 +140,25 @@ def _read_samples(username: str) -> list[np.ndarray]:
         return []
     try:
         archive = np.load(io.BytesIO(cipher.decrypt(row["samples"])), allow_pickle=False)
-        return [archive[key] for key in sorted(archive.files)]
+        detector, recognizer = load_face_models()
+        samples = []
+        for key in sorted(archive.files):
+            sample = archive[key]
+            if sample.ndim == 2:
+                sample = face_embedding(sample, detector, recognizer)
+            elif sample.ndim != 1 or sample.shape != (128,):
+                raise ValueError("Unsupported face profile sample format")
+            if not np.isfinite(sample).all():
+                raise ValueError("Face profile contains a non-finite embedding")
+            samples.append(sample.astype(np.float32))
+        return samples
     except (InvalidToken, ValueError, OSError) as exc:
         raise RuntimeError(f"Encrypted face profile for {username!r} cannot be read") from exc
 
 
 def _store_samples(username: str, samples: list[np.ndarray]) -> None:
+    if not samples or any(sample.shape != (128,) for sample in samples):
+        raise ValueError("Face profiles must contain one or more face embeddings.")
     output = io.BytesIO()
     np.savez_compressed(output, **{f"sample_{index:03d}": image for index, image in enumerate(samples)})
     encrypted = cipher.encrypt(output.getvalue())
@@ -164,6 +199,22 @@ def health():
     return {"status": "ok", "camera_index": CAMERA_INDEX}
 
 
+@app.post("/led/state")
+def set_led_state(request: LedStateRequest, x_face_agent_token: str | None = Header(default=None)):
+    _require_agent_token(x_face_agent_token)
+    try:
+        led_serial.send(request.state)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.error(
+            "ESP8266 serial notification failed for %s on %s: %s",
+            request.state,
+            ESP_SERIAL_PORT,
+            exc,
+        )
+        raise HTTPException(status_code=503, detail="Contrôleur LED ESP8266 indisponible sur le port série.") from exc
+    return {"state": request.state, "status": "sent"}
+
+
 @app.get("/users")
 def list_users(x_face_agent_token: str | None = Header(default=None)):
     _require_agent_token(x_face_agent_token)
@@ -180,33 +231,56 @@ def list_users(x_face_agent_token: str | None = Header(default=None)):
 @app.post("/recognize")
 def recognize(user: UserRequest, x_face_agent_token: str | None = Header(default=None)):
     _require_agent_token(x_face_agent_token)
+    try:
+        load_face_models()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     profiles = _all_profiles()
-    samples = _capture_samples(count=1)
+    samples = _capture_samples(count=RECOGNITION_SAMPLE_COUNT)
     if not profiles:
         return {"recognized": False}
-    recognizer = cv2.face.LBPHFaceRecognizer_create()
-    labels: list[str] = []
-    training_images: list[np.ndarray] = []
-    for username, user_samples in profiles.items():
-        labels.append(username)
-        training_images.extend(user_samples)
-    training_labels = np.concatenate(
-        [np.full(len(profile_samples), label, dtype=np.int32)
-         for label, profile_samples in enumerate(profiles.values())]
+    requested_samples = next(
+        (
+            user_samples
+            for username, user_samples in profiles.items()
+            if hmac.compare_digest(username.casefold(), user.username.casefold())
+        ),
+        None,
     )
-    recognizer.train(training_images, training_labels)
-    predicted_label, distance = recognizer.predict(samples[0])
-    matched = (
-        0 <= predicted_label < len(labels)
-        and hmac.compare_digest(labels[predicted_label].casefold(), user.username.casefold())
-        and distance <= FACE_DISTANCE_THRESHOLD
+    if not requested_samples:
+        return {"recognized": False, "confidence_similarity": None, "samples": len(samples)}
+
+    similarities = []
+    recognized_samples = 0
+    for sample in samples:
+        similarity = max(
+            cosine_similarity(sample, reference)
+            for reference in requested_samples
+        )
+        similarities.append(similarity)
+        if similarity >= FACE_SIMILARITY_THRESHOLD:
+            recognized_samples += 1
+    required_samples = (len(samples) + 1) // 2
+    confidence_similarity = (
+        round(float(np.median(similarities)), 4) if similarities else None
     )
-    return {"recognized": bool(matched), "confidence_distance": round(float(distance), 2)}
+    matched = recognized_samples >= required_samples
+    return {
+        "recognized": matched,
+        "confidence_similarity": confidence_similarity,
+        "samples": len(samples),
+        "recognized_samples": recognized_samples,
+        "required_samples": required_samples,
+    }
 
 
 @app.post("/users/enroll", status_code=201)
 def enroll(user: UserRequest, x_face_agent_token: str | None = Header(default=None)):
     _require_agent_token(x_face_agent_token)
+    try:
+        load_face_models()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     samples = _capture_samples(count=SAMPLE_COUNT, timeout=CAMERA_TIMEOUT_SECONDS * 4)
     _store_samples(user.username, samples)
     return {"username": user.username, "samples": len(samples)}

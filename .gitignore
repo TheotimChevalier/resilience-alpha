@@ -13,6 +13,7 @@ dashboard/node_modules/
 dashboard/dist/
 rag/chroma/
 face_agent/data/
+face_agent/models/*.onnx
 firmware/.pio/
 
 # Fichiers Python et caches
@@ -27,3 +28,6 @@ env/
 # Fichiers OS
 .DS_Store
 Thumbs.db
+
+# Local database backups
+backups/

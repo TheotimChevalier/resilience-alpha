@@ -74,6 +74,14 @@ def test_model_decision_is_sent_to_the_protected_api_route(monkeypatch):
 
     assert captured["url"] == "http://payment-api/ops/detection"
     assert captured["headers"] == {"X-Remediation-Token": "test-remediation-token"}
+    assert captured["json"] == {
+        "model_anomaly": True,
+        "actionable": True,
+        "anomaly_score": -0.15,
+        "request_count": 8.0,
+        "error_ratio": 0.875,
+        "mean_latency": 0.12,
+    }
 
 
 def test_detector_authenticates_with_its_service_secret(monkeypatch):
@@ -100,14 +108,6 @@ def test_detector_authenticates_with_its_service_secret(monkeypatch):
     assert captured["json"] == {
         "client_id": "aiops-detector",
         "client_secret": "test-aiops-client-secret",
-    }
-    assert captured["json"] == {
-        "model_anomaly": True,
-        "actionable": True,
-        "anomaly_score": -0.15,
-        "request_count": 8.0,
-        "error_ratio": 0.875,
-        "mean_latency": 0.12,
     }
 
 

@@ -21,6 +21,20 @@ from auth import main as auth_service
 client = TestClient(auth_service.app)
 
 
+def test_led_states_are_relayed_to_host_agent(monkeypatch):
+    notifications = []
+
+    def fake_face_agent(path, *, method="GET", payload=None):
+        notifications.append((path, method, payload))
+        return {"status": "sent"}
+
+    monkeypatch.setattr(auth_service, "_face_agent", fake_face_agent)
+
+    auth_service._publish_led("granted")
+
+    assert notifications == [("/led/state", "POST", {"state": "granted"})]
+
+
 def test_face_check_then_password_issues_an_api_token(monkeypatch):
     monkeypatch.setattr(auth_service, "_face_agent", lambda *args, **kwargs: {"recognized": True})
     monkeypatch.setattr(auth_service, "_publish_led", lambda *_: None)

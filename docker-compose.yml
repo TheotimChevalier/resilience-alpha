@@ -27,9 +27,6 @@ services:
       FACE_AGENT_TOKEN: ${FACE_AGENT_TOKEN:?Set FACE_AGENT_TOKEN in the local .env file}
       AIOPS_CLIENT_SECRET: ${AIOPS_CLIENT_SECRET:?Set AIOPS_CLIENT_SECRET in the local .env file}
       AUTH_DB_PATH: /data/auth.db
-      MQTT_HOST: mosquitto
-      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the local .env file}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the local .env file}
     volumes:
       - auth-data:/data
     healthcheck:
@@ -37,27 +34,6 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
-    depends_on:
-      mosquitto:
-        condition: service_started
-    restart: unless-stopped
-    networks: [resilience-net]
-
-  mosquitto:
-    image: eclipse-mosquitto:2.0.20
-    container_name: resilience-mosquitto
-    user: "1883:1883"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        printf 'listener 1883 0.0.0.0\nallow_anonymous false\npassword_file /tmp/password_file\npersistence false\n' > /tmp/mosquitto.conf
-        mosquitto_passwd -b -c /tmp/password_file "$$MQTT_USERNAME" "$$MQTT_PASSWORD"
-        exec mosquitto -c /tmp/mosquitto.conf
-    ports:
-      - "${MQTT_BIND_ADDRESS:-127.0.0.1}:1883:1883"
-    environment:
-      MQTT_USERNAME: ${MQTT_USERNAME:?Set MQTT_USERNAME in the local .env file}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:?Set MQTT_PASSWORD in the local .env file}
     restart: unless-stopped
     networks: [resilience-net]
 

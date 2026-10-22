@@ -24,16 +24,21 @@ jobs:
             api/requirements-dev.txt
             auth/requirements.txt
             aiops/requirements.txt
+            face_agent/requirements.txt
 
       - name: Install Python dependencies
         run: |
           python -m pip install -r api/requirements.txt -r api/requirements-dev.txt
           python -m pip install -r auth/requirements.txt
           python -m pip install -r aiops/requirements.txt
+          python -m pip install -r face_agent/requirements.txt
           python -m pip install ansible-core
 
       - name: Run API and AIOps tests
         run: python -m pytest api/tests aiops/test_detector.py -q
+
+      - name: Test ESP8266 serial bridge
+        run: python -m pytest face_agent/test_led_serial.py -q
 
       - name: Check Ansible playbook syntax
         run: |
@@ -47,8 +52,6 @@ jobs:
           AUTH_SIGNING_SECRET: ci-auth-signing-secret-with-at-least-32-characters
           FACE_AGENT_TOKEN: ci-face-agent-token-with-at-least-32-characters
           AIOPS_CLIENT_SECRET: ci-aiops-secret-with-at-least-32-characters
-          MQTT_USERNAME: ci-mqtt-user
-          MQTT_PASSWORD: ci-mqtt-password-with-at-least-32-characters
           REMEDIATION_TOKEN: ci-remediation-token-with-at-least-24-characters
           EXERCISE_TOKEN: ci-exercise-token-with-at-least-24-characters
           OPERATOR_USERNAME: ci-operator
@@ -61,6 +64,32 @@ jobs:
             -v "$GITHUB_WORKSPACE/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
             -v "$GITHUB_WORKSPACE/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro" \
             prom/prometheus:v2.55.1 check config /etc/prometheus/prometheus.yml
+
+      - name: Smoke test Compose services
+        env:
+          POSTGRES_PASSWORD: ci-postgres-password
+          AUTH_SIGNING_SECRET: ci-auth-signing-secret-with-at-least-32-characters
+          FACE_AGENT_TOKEN: ci-face-agent-token-with-at-least-32-characters
+          AIOPS_CLIENT_SECRET: ci-aiops-secret-with-at-least-32-characters
+          REMEDIATION_TOKEN: ci-remediation-token-with-at-least-24-characters
+          EXERCISE_TOKEN: ci-exercise-token-with-at-least-24-characters
+          OPERATOR_USERNAME: ci-operator
+          OPERATOR_PASSWORD: ci-operator-password-with-12-chars
+          GRAFANA_ADMIN_PASSWORD: ci-grafana-password
+        run: |
+          set -e
+          trap 'docker compose down -v --remove-orphans' EXIT
+          docker compose up --pull always --build -d
+          for attempt in {1..30}; do
+            if docker compose ps --status running | grep -q resilience-payment-api; then
+              break
+            fi
+            sleep 5
+          done
+          curl --fail --retry 5 --retry-delay 2 http://localhost/health
+          curl --fail --retry 5 --retry-delay 2 http://localhost:8080
+          curl --fail --retry 5 --retry-delay 2 http://localhost:9090/-/ready
+          docker compose ps
 
       - name: Test local RAG source index synchronization
         env:
