@@ -6,7 +6,7 @@ exécuté sur deux machines.
 
 | Rendu | État ici | À compléter par le consortium |
 |---|---|---|
-| Dossier d’ingénierie et gouvernance PDF (8–12 pages indicatives) | Contenu technique préparé dans `docs/` et `rag/procedure_crise.md` | Mise en page PDF, résultats réels, matrice EBIOS validée, mesures de reprise, contributions nominatives |
+| Dossier d’ingénierie et gouvernance PDF (8–12 pages indicatives) | `resilience-alpha-documentation.pdf` : dossier structuré de 12 pages avec architecture ; source `docs/project-dossier.md` | Ajouter résultats réels complémentaires, matrice EBIOS validée, mesures répétées de reprise et contributions nominatives |
 | Support de présentation PPTX | Plan de présentation non généré | Ajouter nom/numéro du groupe, intervenants, arbitrages et captures réelles |
 | Clip Chrono MP4 (≤60 s, sans coupe) | Scénario et critères disponibles dans `docs/incident-response.md` | Enregistrer la séquence live depuis les machines autorisées ; une vidéo ne peut pas être fabriquée à partir de tests non exécutés |
 | Archive Code.zip | Générateur filtrant fourni (`scripts/package_release.py`), incluant l'agent facial et le firmware ; `.env`, les clés, `secrets.h` et les bases biométriques sont exclus | Exécuter avec le numéro de groupe et inspecter le contenu avant remise |
