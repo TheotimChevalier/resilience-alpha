@@ -1,0 +1,114 @@
+---
+- name: Enable the local Ollama and RAG operator assistant
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    project_root: "{{ playbook_dir }}/.."
+
+  tasks:
+    - name: Require the host .env file
+      ansible.builtin.stat:
+        path: "{{ project_root }}/.env"
+      register: local_env
+
+    - name: Stop if the host .env file is missing
+      ansible.builtin.assert:
+        that:
+          - local_env.stat.exists
+          - local_env.stat.isreg
+        fail_msg: "Create .env from .env.example before enabling the assistant."
+
+    - name: Start Ollama in the optional AI profile
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - --profile
+          - ai
+          - up
+          - --detach
+          - ollama
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Pull the local chat model (3B parameters)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - --profile
+          - ai
+          - exec
+          - -T
+          - ollama
+          - ollama
+          - pull
+          - sh
+          - -c
+          - ollama pull "$LLM_MODEL"
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Pull the local embedding model
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - --profile
+          - ai
+          - exec
+          - -T
+          - ollama
+          - ollama
+          - pull
+          - sh
+          - -c
+          - ollama pull "$EMBED_MODEL"
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Build and start the RAG assistant after the models are available
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --env-file
+          - .env
+          - --profile
+          - ai
+          - up
+          - --build
+          - --detach
+          - --wait
+          - --wait-timeout
+          - "900"
+          - rag-assistant
+        chdir: "{{ project_root }}"
+      changed_when: false
+
+    - name: Verify assistant readiness and index initialization
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - resilience-rag
+          - python
+          - -c
+          - >-
+            import json, urllib.request;
+            response = urllib.request.urlopen('http://localhost:8002/health', timeout=5);
+            status = json.loads(response.read());
+            assert status.get('status') == 'ok', status
+        chdir: "{{ project_root }}"
+      register: assistant_health
+      changed_when: false
+      retries: 10
+      delay: 10
+      until: assistant_health.rc == 0

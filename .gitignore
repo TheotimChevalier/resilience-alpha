@@ -1,8 +1,20 @@
 ﻿# Secrets en clair (Interdit par le jury)
 .env
-secrets/app.env
+.env.*
+!.env.example
+secrets/
 *.pem
 *.key
+*.zip
+*.mp4
+dist/
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+rag/chroma/
+face_agent/data/
+face_agent/models/*.onnx
+firmware/.pio/
 
 # Fichiers Python et caches
 __pycache__/
@@ -10,8 +22,12 @@ __pycache__/
 *.pyo
 venv/
 env/
+.venv*/
 .pytest_cache/
 
 # Fichiers OS
 .DS_Store
 Thumbs.db
+
+# Local database backups
+backups/

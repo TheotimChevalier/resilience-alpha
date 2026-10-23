@@ -1,111 +1,128 @@
-"""Safe, bounded resilience demonstration against the local demo only."""
+"""Authorized resilience exercise. Run only against the team's own lab."""
 
+import os
+import sys
 import time
+from datetime import datetime, timezone
 
 import requests
 
-API_URL = "http://127.0.0.1:8000"
-TIMEOUT = 5
+TARGET_HOST = os.getenv("TARGET_HOST", "192.168.137.1")
+WAF_URL = os.getenv("WAF_URL", f"http://{TARGET_HOST}")
+AUTH_URL = os.getenv("AUTH_URL", f"http://{TARGET_HOST}:8080/auth")
+DASHBOARD_URL = os.getenv("DASHBOARD_URL", f"http://{TARGET_HOST}:8080")
+USERNAME = os.getenv("OPERATOR_USERNAME")
+PASSWORD = os.getenv("OPERATOR_PASSWORD")
+EXERCISE_TOKEN = os.getenv("EXERCISE_TOKEN")
 
 
-def run_demo():
-    print("[1/4] Vérification de l'API locale et de la protection IA...")
-    deadline = time.monotonic() + 45
-    while True:
-        try:
-            health = requests.get(f"{API_URL}/health", timeout=TIMEOUT)
-            break
-        except requests.RequestException:
-            if time.monotonic() >= deadline:
-                raise RuntimeError("L'API locale ne répond pas après 45 secondes.")
-            print("      API en redémarrage, nouvelle vérification dans une seconde...")
-            time.sleep(1)
-    health.raise_for_status()
-    guard = requests.get(f"{API_URL}/security/status", timeout=TIMEOUT)
-    guard.raise_for_status()
-    status = guard.json()
-    print(f"      API: opérationnelle | garde: {status['guard']} | Ollama: {status['ollama']} ({status['model']})")
-    if status["guard"] != "active":
-        raise RuntimeError("La garde Python n'est pas active.")
+def log(message, stream=sys.stdout):
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    print(f"[{timestamp}] {message}", file=stream, flush=True)
 
-    scenarios = [
-        {
-            "name": "Montant hors plafond",
-            "amount": 6000.00,
-            "user_id": "JURY-ANOMALIE-MONTANT",
-            "expected_status": 403,
-        },
-        {
-            "name": "Marqueur de simulation",
-            "amount": 9999.99,
-            "user_id": "JURY-SIMULATION",
-            "expected_status": 403,
-        },
-        {
-            "name": "Montant négatif invalide",
-            "amount": -1.00,
-            "user_id": "JURY-ENTREE-INVALIDE",
-            "expected_status": 400,
-        },
+
+def require_configuration():
+    missing = [
+        name
+        for name, value in (
+            ("OPERATOR_USERNAME", USERNAME),
+            ("OPERATOR_PASSWORD", PASSWORD),
+            ("EXERCISE_TOKEN", EXERCISE_TOKEN),
+        )
+        if not value
     ]
-    print("[2/4] Trois signaux synthétiques distincts, un appel par scénario...")
-    for scenario in scenarios:
-        response = requests.post(
-            f"{API_URL}/api/v1/pay",
-            json={
-                "user_id": scenario["user_id"],
-                "amount": scenario["amount"],
-                "destination_account": "LAB-ONLY",
-            },
-            timeout=TIMEOUT,
-        )
-        if response.status_code != scenario["expected_status"]:
-            raise RuntimeError(
-                f"{scenario['name']} aurait dû être rejeté (HTTP {scenario['expected_status']}), "
-                f"reçu HTTP {response.status_code}."
+    if missing:
+        raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
+
+
+def run_attack():
+    require_configuration()
+    log(f"[*] Authorized resilience exercise against {TARGET_HOST} (WAF {WAF_URL})")
+    log(f"[*] Dashboard: {DASHBOARD_URL}")
+    face_response = requests.post(
+        f"{AUTH_URL}/face/verify",
+        json={"username": USERNAME},
+        timeout=65,
+    )
+    face_response.raise_for_status()
+    log("[*] Face check requested from the host camera; the operator must be in view.")
+    token_response = requests.post(
+        f"{AUTH_URL}/token",
+        json={
+            "username": USERNAME,
+            "password": PASSWORD,
+            "challenge_id": face_response.json()["challenge_id"],
+        },
+        timeout=5,
+    )
+    token_response.raise_for_status()
+    operator_token = token_response.json()["access_token"]
+
+    injection = requests.post(
+        f"{WAF_URL}/admin/inject-fault",
+        headers={"X-Exercise-Token": EXERCISE_TOKEN},
+        timeout=5,
+    )
+    injection.raise_for_status()
+    incident = injection.json()["incident_id"]
+    log(f"[+] Controlled incident {incident} injected.")
+
+    failures = 0
+    for attempt in range(8):
+        try:
+            response = requests.post(
+                f"{WAF_URL}/api/v1/pay",
+                headers={"Authorization": f"Bearer {operator_token}"},
+                json={
+                    "user_id": f"REDTEAM-{attempt + 1}",
+                    "amount": 1.0,
+                    "destination_account": "LAB-ONLY",
+                },
+                timeout=5,
             )
-        print(
-            f"      {scenario['name']} : rejeté (HTTP {response.status_code}), "
-            "aucun paiement enregistré."
-        )
+            if response.status_code == 503:
+                failures += 1
+                log(f"[!] Payment correctly unavailable during incident ({attempt + 1}/8).")
+            elif response.ok:
+                log("[+] Service recovered while the exercise was running.")
+            else:
+                log(f"[-] Unexpected payment response: HTTP {response.status_code}.")
+        except requests.RequestException as exc:
+            log(f"[-] Payment request failed: {exc}")
         time.sleep(0.25)
 
-    print("[3/4] Attente des analyses locales Ollama...")
-    deadline = time.monotonic() + 40
-    final_events = []
-    while time.monotonic() < deadline:
-        events_response = requests.get(f"{API_URL}/security/events", timeout=TIMEOUT)
-        events_response.raise_for_status()
-        final_events = events_response.json()["events"]
-        requested = [event for event in final_events if event["amount"] in {6000.00, 9999.99, -1.00}]
-        if len(requested) == len(scenarios) and all(
-            event["analysis_status"] != "analyse Ollama en cours" for event in requested
-        ):
-            break
-        time.sleep(1)
-    for amount in (6000.00, 9999.99, -1.00):
-        event = next((item for item in final_events if item["amount"] == amount), None)
-        if not event or event["analysis_status"] == "analyse Ollama en cours":
-            raise RuntimeError(f"L'analyse Ollama du signal de {amount:.2f} EUR n'est pas terminée.")
-        print(
-            f"      IA: {event['category']} | risque {event['severity']} | "
-            f"{event['analysis_status']}\n      {event['explanation']}"
-        )
+    if failures == 0:
+        raise RuntimeError("The service did not expose the injected fault to the payment route.")
 
-    print("[4/4] Vérification qu'un paiement légitime reste disponible...")
-    payment = requests.post(
-        f"{API_URL}/api/v1/pay",
-        json={
-            "user_id": "JURY-POST-GUARD",
-            "amount": 0.01,
-            "destination_account": "LAB-ONLY",
-        },
-        timeout=TIMEOUT,
-    )
-    payment.raise_for_status()
-    print(f"      Paiement légitime accepté : {payment.json()['transaction_id']}")
-    print("Démonstration terminée : signal bloqué, analyse IA affichée, service disponible.")
+    log("[*] Waiting up to 90 seconds for ML detection and verified recovery.")
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        try:
+            health = requests.get(f"{WAF_URL}/health", timeout=3)
+            if health.ok and health.json().get("status") == "ok":
+                check = requests.post(
+                    f"{WAF_URL}/api/v1/pay",
+                    headers={"Authorization": f"Bearer {operator_token}"},
+                    json={
+                        "user_id": "REDTEAM-POST-RECOVERY",
+                        "amount": 0.02,
+                        "destination_account": "LAB-ONLY",
+                    },
+                    timeout=5,
+                )
+                check.raise_for_status()
+                log(f"[+] Service recovered; verification payment {check.json()['transaction_id']} succeeded.")
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(2)
+
+    raise TimeoutError("AIOps did not restore the service within 90 seconds; inspect Grafana and AIOps logs.")
 
 
 if __name__ == "__main__":
-    run_demo()
+    try:
+        run_attack()
+    except (RuntimeError, TimeoutError, requests.RequestException) as error:
+        log(f"[x] Exercise failed: {error}", stream=sys.stderr)
+        sys.exit(1)
