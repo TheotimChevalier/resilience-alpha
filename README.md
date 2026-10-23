@@ -259,6 +259,7 @@ les deux machines.
 
 ## Documentation et livrables
 
+- Documentation centralisée et point d’entrée unique : [`docs/README.md`](./docs/README.md)
 - Architecture et flux : [`docs/architecture.md`](./docs/architecture.md)
 - Correspondance avec le sujet et travaux de remise : [`docs/requirements-traceability.md`](./docs/requirements-traceability.md)
 - Expérience ML synthétique et mesures : [`docs/ml-experiment.md`](./docs/ml-experiment.md)
