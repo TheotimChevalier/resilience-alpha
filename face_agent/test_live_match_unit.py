@@ -130,3 +130,94 @@ def test_capture_live_faces_reports_no_face_before_timeout(monkeypatch):
 
     with pytest.raises(test_live_match.NoLiveFaceError, match="found 0"):
         test_live_match.capture_live_faces(0, (object(), object()), 1, 1.0)
+
+
+@pytest.mark.parametrize(
+    ("similarities", "expected_state", "expected_exit_code"),
+    [([0.8], "granted", 0), ([0.1], "face_denied", 1)],
+)
+def test_led_option_sends_match_result_without_hardware(
+    monkeypatch,
+    similarities,
+    expected_state,
+    expected_exit_code,
+):
+    bridges = []
+
+    class FakeLedSerialBridge:
+        def __init__(self, port):
+            self.port = port
+            self.states = []
+            self.closed = False
+            bridges.append(self)
+
+        def send(self, state):
+            self.states.append(state)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(test_live_match, "LedSerialBridge", FakeLedSerialBridge)
+    monkeypatch.setattr(test_live_match, "load_face_models", lambda: (object(), object()))
+    monkeypatch.setattr(
+        test_live_match,
+        "load_reference_faces",
+        lambda *_args, **_kwargs: ([np.array([1.0])], [test_live_match.Path("reference.jpg")]),
+    )
+    monkeypatch.setattr(
+        test_live_match,
+        "capture_live_faces",
+        lambda *_args: [np.array([1.0])],
+    )
+    monkeypatch.setattr(test_live_match, "compare_faces", lambda *_args: similarities)
+    monkeypatch.setattr(
+        test_live_match.sys,
+        "argv",
+        ["test_live_match.py", "--led", "--serial-port", "COM_TEST"],
+    )
+
+    assert test_live_match.main() == expected_exit_code
+    assert len(bridges) == 1
+    assert bridges[0].port == "COM_TEST"
+    assert bridges[0].states == [expected_state]
+    assert bridges[0].closed is True
+
+
+def test_led_option_reports_face_denied_when_no_live_face(monkeypatch):
+    bridges = []
+
+    class FakeLedSerialBridge:
+        def __init__(self, port):
+            self.port = port
+            self.states = []
+            self.closed = False
+            bridges.append(self)
+
+        def send(self, state):
+            self.states.append(state)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(test_live_match, "LedSerialBridge", FakeLedSerialBridge)
+    monkeypatch.setattr(test_live_match, "load_face_models", lambda: (object(), object()))
+    monkeypatch.setattr(
+        test_live_match,
+        "load_reference_faces",
+        lambda *_args, **_kwargs: ([np.array([1.0])], [test_live_match.Path("reference.jpg")]),
+    )
+    monkeypatch.setattr(
+        test_live_match,
+        "capture_live_faces",
+        lambda *_args: (_ for _ in ()).throw(test_live_match.NoLiveFaceError("no face")),
+    )
+    monkeypatch.setattr(
+        test_live_match.sys,
+        "argv",
+        ["test_live_match.py", "--led", "--serial-port", "COM_TEST"],
+    )
+
+    assert test_live_match.main() == 1
+    assert len(bridges) == 1
+    assert bridges[0].states == ["face_denied"]
+    assert bridges[0].closed is True

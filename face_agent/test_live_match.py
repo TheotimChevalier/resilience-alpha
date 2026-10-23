@@ -22,6 +22,15 @@ class NoLiveFaceError(RuntimeError):
     pass
 
 
+def _send_led_state(port: str, state: str) -> None:
+    bridge = LedSerialBridge(port)
+    try:
+        bridge.send(state)
+    finally:
+        bridge.close()
+    print(f"ESP8266 LED: {state} on {port}.")
+
+
 def find_reference_images(path: Path) -> list[Path]:
     if path.is_file():
         if path.suffix.lower() not in IMAGE_SUFFIXES:
@@ -162,6 +171,11 @@ def main() -> int:
         help="Seconds allowed to collect samples (default: 30)",
     )
     parser.add_argument(
+        "--led",
+        action="store_true",
+        help="Allume la LED verte si le visage est reconnu, rouge sinon.",
+    )
+    parser.add_argument(
         "--led-on-mismatch",
         action="store_true",
         help="Send the red face_denied alert to the ESP8266 if the image does not match.",
@@ -186,13 +200,8 @@ def main() -> int:
     except NoLiveFaceError as exc:
         print(str(exc), file=sys.stderr)
         print("Result: NO MATCH (no live face available)")
-        if args.led_on_mismatch:
-            bridge = LedSerialBridge(args.serial_port)
-            try:
-                bridge.send("face_denied")
-            finally:
-                bridge.close()
-            print(f"ESP8266 acknowledged red face_denied alert on {args.serial_port}.")
+        if args.led or args.led_on_mismatch:
+            _send_led_state(args.serial_port, "face_denied")
         return 1
 
     similarities = compare_faces(reference_embeddings, live_embeddings)
@@ -210,13 +219,10 @@ def main() -> int:
     print(f"Result: {'MATCH' if match else 'NO MATCH'}")
     print("This local prototype does not verify liveness or prove identity.")
 
-    if args.led_on_mismatch and not match:
-        bridge = LedSerialBridge(args.serial_port)
-        try:
-            bridge.send("face_denied")
-        finally:
-            bridge.close()
-        print(f"ESP8266 acknowledged red face_denied alert on {args.serial_port}.")
+    if args.led and match:
+        _send_led_state(args.serial_port, "granted")
+    elif (args.led or args.led_on_mismatch) and not match:
+        _send_led_state(args.serial_port, "face_denied")
 
     return 0 if match else 1
 
