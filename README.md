@@ -3,6 +3,9 @@
 Démonstrateur local de paiement fictif et de cyber-résilience. Toutes les données et
 tous les scénarios sont synthétiques ; ne pas utiliser de données bancaires réelles.
 
+Le dossier technique du projet, incluant le schéma d’architecture, est disponible
+dans [resilience-alpha-documentation.pdf](./resilience-alpha-documentation.pdf).
+
 ## ESP8266 et LED bicolore
 
 Le projet PlatformIO est dans `firmware\`. L'ESP8266 se branche en USB au PC Hôte

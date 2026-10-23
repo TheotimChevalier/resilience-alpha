@@ -1,5 +1,10 @@
 # Documentation centralisée – Resilience Alpha
 
+Le dossier technique illustré et paginé en 12 pages est disponible dans
+[`../resilience-alpha-documentation.pdf`](../resilience-alpha-documentation.pdf).
+Sa source est [`project-dossier.md`](./project-dossier.md) ; les documents ci-dessous
+restent les références détaillées par sujet.
+
 Ce document centralise la documentation technique, opérationnelle et de gouvernance du démonstrateur local de paiement fictif et de cyber-résilience. Il sert de point d’entrée unique pour le projet, tout en conservant les documents détaillés dans le dossier `docs/` et la procédure de crise dans `rag/procedure_crise.md`.
 
 ## 1. Contexte du projet
